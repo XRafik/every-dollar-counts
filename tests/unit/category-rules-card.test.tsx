@@ -63,15 +63,13 @@ describe('CategoryRulesCard', () => {
     expect(screen.getByRole('combobox').className).toContain('md:max-w-48')
   })
 
-  // Until PR 3 adds learning, the card must not promise it.
-  it('explains rules without promising learning', () => {
+  it('explains that a pick teaches', () => {
     render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
     expect(
       screen.getByText(
-        "Each rule files one merchant's transactions under a category of your choosing, past and future. A rule never moves money between spending, transfers and income, and never touches card payments."
+        "When you pick a category for a merchant the app hasn't learned yet, it files that merchant's other transactions the same way, past and future. It never moves money between spending, transfers and income, and never touches card payments."
       )
     ).toBeTruthy()
-    expect(screen.queryByText(/learn|teach|remember/i)).toBeNull()
   })
 
   it('omits the hand-pick count when it is zero', () => {
@@ -89,7 +87,9 @@ describe('CategoryRulesCard', () => {
 
   it('shows the empty state', () => {
     render(<CategoryRulesCard rules={[]} categories={CATS} />)
-    expect(screen.getByText('No category rules yet.')).toBeTruthy()
+    expect(
+      screen.getByText('Nothing learned yet. Pick a category on a transaction and the app will remember it for that merchant.')
+    ).toBeTruthy()
   })
 
   it('Changes with the category it was showing, and refreshes', async () => {
@@ -194,15 +194,24 @@ describe('CategoryRulesCard', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  // Learning from a pick arrives in PR 3, which restores the "will teach the app again" line.
-  it("Remove's dialog omits zero counts and promises no learning", () => {
+  it("Remove's dialog omits zero counts and says the next pick teaches", () => {
     render(<CategoryRulesCard rules={[safeway({ pickedByHand: 0 })]} categories={CATS} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('Remove the Safeway rule?')).toBeTruthy()
     expect(within(dialog).getByText('145 Safeway transactions go back to their bank’s category.')).toBeTruthy()
     expect(within(dialog).queryByText(/picked by hand|keep theirs/)).toBeNull()
-    expect(within(dialog).queryByText(/teach|learn/)).toBeNull()
+    expect(within(dialog).getByText('The next category you pick for Safeway will teach the app again.')).toBeTruthy()
+  })
+
+  it("Remove's dialog says the next pick teaches even with no current transactions", () => {
+    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
+    const dialog = screen.getByRole('dialog', { hidden: true })
+    expect(within(dialog).getByText('The next category you pick for Safeway will teach the app again.')).toBeTruthy()
+    expect(
+      within(dialog).getByText('No Safeway transactions are showing right now — for example, if a bank is disconnected.')
+    ).toBeTruthy()
   })
 
   it("Remove's dialog speaks of one transaction, and one hand pick, in the singular", () => {
