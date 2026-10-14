@@ -352,7 +352,7 @@ describe('POST /api/transactions/categorize', () => {
   })
 })
 
-// #28 spec §6.1 step 8 (PR 3). A first pick for a merchant teaches a household rule; a failed learn
+// #28 spec §6.1 step 8. A pick on a merchant with no rule teaches a household rule; a failed learn
 // never fails the pick, which is already saved.
 describe('POST /api/transactions/categorize: learning', () => {
   const pick = (category = 'Grocery') => post({ transactionId: 'txn-1', category })
@@ -388,6 +388,26 @@ describe('POST /api/transactions/categorize: learning', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true, learned: 'exists' })
     expect(calls.updates).toHaveLength(1)
+    expect(logs).toContainEqual(['[categorize] learn: rule exists', { merchant_key: 'safeway' }])
+    expect(logs.some((l) => l[0] === '[categorize] learned')).toBe(false)
+  })
+
+  // The kind gate is built from the household's WHOLE list: from the picked category alone, the
+  // row's TRANSFER_OUT primary would map to nothing and show as Uncategorized (spending), and a
+  // transfer pick would be refused.
+  it('learns a transfer pick on a TRANSFER_OUT row, gated on the whole category list', async () => {
+    const calls = makeSupabase({
+      row: { ...ROW, pfc_primary: 'TRANSFER_OUT', pfc_detailed: 'TRANSFER_OUT_ACCOUNT_TRANSFER' },
+      categories: [
+        { id: 'c1', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 1 },
+        { id: 'c2', name: 'Grocery', pfc_primary: null, sort_order: 2 },
+        { id: 'c4', name: 'Transfer In', pfc_primary: 'TRANSFER_IN', sort_order: 4 },
+        { id: 'c5', name: 'Transfer Out', pfc_primary: 'TRANSFER_OUT', sort_order: 5 },
+      ],
+    })
+    expect(await (await pick('Transfer In')).json()).toEqual({ ok: true, learned: 'created' })
+    expect(calls.upserts).toHaveLength(1)
+    expect(calls.upserts[0].payload).toMatchObject({ category_id: 'c4' })
   })
 
   it.each([
@@ -445,7 +465,9 @@ describe('POST /api/transactions/categorize: learning', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true, learned: 'failed' })
     expect(calls.updates).toHaveLength(1)
-    expect(logs.some((l) => l[0] === '[categorize] learn failed')).toBe(true)
+    expect(logs).toContainEqual(['[categorize] learn failed', {
+      household_id: 'hh-1', merchant_key: 'safeway', code: '23503', message: 'fk violation', details: undefined,
+    }])
     expect(JSON.stringify(await (await pick()).json())).not.toContain('fk violation')
   })
 

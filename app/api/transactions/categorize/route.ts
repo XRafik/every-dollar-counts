@@ -9,9 +9,10 @@ import { assertEnvMatchesDatabase, EnvMismatchError } from '@/lib/app-env'
 // the guards below decide WHICH writes are coherent. Every message here may be shown to a person
 // verbatim (CategoryPicker does), so none carries the database's words; those go to the log.
 //
-// Then, if that pick is the first for its merchant, it teaches a household rule (§6.1 step 8) that
-// files the merchant's other rows the same way at read time. Learning never writes transactions,
-// and a failed learn never fails the pick.
+// Then, if the merchant has no rule yet and the pick passes learnableRule (same kind, and not the
+// bank's own category), it teaches a household rule (§6.1 step 8) that files the merchant's unpicked
+// rows the same way at read time. Learning never writes transactions, and a failed learn never fails
+// the pick.
 //
 // What it will not do:
 // - clear a pick (spec decision 7), or write a name that is not one of the household's categories
@@ -148,10 +149,12 @@ async function learn(
   try {
     rule = learnableRule(row, picked.name, buildKindContext(cats))
   } catch (e) {
-    console.error('[categorize] learn failed', e)
+    // No merchant_key: the gate computes it, and it is what just threw.
+    console.error('[categorize] learn failed', { household_id: row.household_id }, e)
     return 'failed'
   }
   if (!rule) return 'no'
+  const context = { household_id: row.household_id, merchant_key: rule.merchantKey }
 
   // Local and Preview run sandbox against the shared database, and must not create rules that
   // production then applies.
@@ -162,7 +165,7 @@ async function learn(
       console.warn('[categorize] learn skipped: environment', e.message)
       return 'skipped'
     }
-    console.error('[categorize] learn failed', e)
+    console.error('[categorize] learn failed', context, e)
     return 'failed'
   }
 
@@ -185,14 +188,22 @@ async function learn(
       .select('id')
     if (error) {
       // 23503 here is the category deleted between the read and the insert.
-      console.error('[categorize] learn failed', error.code, error.message)
+      console.error('[categorize] learn failed', {
+        ...context,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+      })
       return 'failed'
     }
-    if (!data?.length) return 'exists'
+    if (!data?.length) {
+      console.info('[categorize] learn: rule exists', { merchant_key: rule.merchantKey })
+      return 'exists'
+    }
     console.info('[categorize] learned', { merchant_key: rule.merchantKey, category: picked.name, rule: data[0].id })
     return 'created'
   } catch (e) {
-    console.error('[categorize] learn failed', e)
+    console.error('[categorize] learn failed', context, e)
     return 'failed'
   }
 }
