@@ -3,7 +3,7 @@
 - **Repo:** `smilne3/every-dollar-counts`
 - **Date:** 2026-09-11
 - **Closes:** #28
-- **Status:** Rules design (§1–§13) approved in brainstorming on 2026-09-11 and revised after an adversarial review. Jev suggestions (§14) added and approved on 2026-10-07. PR 1 merged as #142, PR 2 as #146 (22 rules live since 2026-10-09). PR 3 (learning) is this branch.
+- **Status:** Rules design (§1–§13) approved in brainstorming on 2026-09-11 and revised after an adversarial review. Jev suggestions (§14) added and approved on 2026-10-07. PR 1 merged as #142, PR 2 as #146 (22 rules live since 2026-10-09). PR 3 (learning) is #152.
 - **One line:** The first time you file a merchant under a category, the app remembers it as a household rule and applies it to that merchant's other transactions, past and future. Rules are resolved whenever a page reads, never written onto a transaction, so changing or removing one moves every row with it. For merchants with no rule, Jev (TypeSafe) suggests one of the household's own categories, applied automatically when it is confident and never across spending, transfers and income (§14).
 
 ### Changes since 2026-09-11
