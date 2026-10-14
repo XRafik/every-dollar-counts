@@ -6,6 +6,7 @@ import {
   buildCategoryContext,
   resolveCategory,
   changedByRule,
+  learnableRule,
   type CategorizableTxn,
   type CategoryContext,
   type CategoryData,
@@ -168,5 +169,90 @@ describe('buildCategoryContext', () => {
     // @ts-expect-error data must come from fetchCategoryContext
     const data: CategoryData = { categories: DEFAULTS, rules: [] }
     expect([literal, data, HH]).toBeTruthy()
+  })
+})
+
+// #28 spec §6.1 step 8: whether a pick teaches. The gate is resolveCategory's own (§5.3 step 4), so
+// a learned rule always relabels the row it was learned from (decision 4, §2.1).
+describe('learnableRule', () => {
+  const k = buildKindContext(DEFAULTS)
+  // learnableRule never looks at user_category: a re-pick teaches like a first pick (Task 2).
+  const txn = row
+
+  it('teaches a same-kind pick that differs from the bank', () => {
+    expect(learnableRule(txn(), 'Grocery', k)).toEqual({ merchantKey: 'safeway', merchantLabel: 'Safeway' })
+  })
+
+  it('trims the label and lowercases the key', () => {
+    expect(learnableRule(txn({ merchant_name: '  SAFEWAY ' }), 'Grocery', k)).toEqual({
+      merchantKey: 'safeway',
+      merchantLabel: 'SAFEWAY',
+    })
+  })
+
+  it.each([null, '', '   '])('teaches nothing without a merchant name (%j)', (merchant_name) => {
+    expect(learnableRule(txn({ merchant_name }), 'Grocery', k)).toBeNull()
+  })
+
+  it('teaches nothing when the pick equals the bank category', () => {
+    expect(learnableRule(txn(), 'Food & Drink', k)).toBeNull()
+  })
+
+  it('teaches nothing across the line', () => {
+    expect(learnableRule(txn(), 'Income', k)).toBeNull()
+    expect(learnableRule(txn(), 'Transfer Out', k)).toBeNull()
+    expect(learnableRule(txn({ pfc_primary: 'TRANSFER_OUT' }), 'Grocery', k)).toBeNull()
+  })
+
+  it('teaches nothing on a card payment, even with a merchant name', () => {
+    expect(
+      learnableRule(txn({ pfc_primary: 'LOAN_PAYMENTS', pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' }), 'Grocery', k)
+    ).toBeNull()
+  })
+
+  it('teaches nothing on a TRANSFER_OUT row after "Transfer Out" is deleted', () => {
+    const k2 = buildKindContext(without('Transfer Out'))
+    // Plaid's kind is transfer; the row shows Uncategorized, which counts as spending.
+    expect(learnableRule(txn({ pfc_primary: 'TRANSFER_OUT' }), 'Grocery', k2)).toBeNull()
+    expect(learnableRule(txn({ pfc_primary: 'TRANSFER_OUT' }), 'Transfer In', k2)).toBeNull()
+  })
+
+  it('teaches nothing on an INCOME row after "Income" is deleted', () => {
+    expect(learnableRule(txn({ pfc_primary: 'INCOME' }), 'Grocery', buildKindContext(without('Income')))).toBeNull()
+  })
+
+  it('teaches a spending pick on an unmapped spending row', () => {
+    expect(learnableRule(txn({ pfc_primary: 'LOAN_DISBURSEMENTS' }), 'Grocery', k)).toEqual({
+      merchantKey: 'safeway',
+      merchantLabel: 'Safeway',
+    })
+  })
+
+  it('teaches a same-kind pick within transfers', () => {
+    expect(learnableRule(txn({ pfc_primary: 'TRANSFER_OUT' }), 'Transfer In', k)).not.toBeNull()
+  })
+
+  // The property that keeps the gate and the resolver from drifting apart: a pick teaches exactly
+  // when the rule it would create relabels that same row once the pick is gone.
+  it('agrees with resolveCategory on every row, pick and category set', () => {
+    const sets = [DEFAULTS, without('Income'), without('Transfer In'), without('Transfer Out'),
+      [...DEFAULTS, cat('Uncategorized', null, 200)]]
+    const primaries = ['FOOD_AND_DRINK', 'INCOME', 'TRANSFER_IN', 'TRANSFER_OUT', 'LOAN_PAYMENTS',
+      'LOAN_DISBURSEMENTS', null]
+    const details = [null, 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT']
+    let taught = 0
+    for (const cats of sets) {
+      const kc = buildKindContext(cats)
+      for (const pfc_primary of primaries) for (const pfc_detailed of details) for (const picked of cats) {
+        const t = txn({ pfc_primary, pfc_detailed })
+        const learned = learnableRule(t, picked.name, kc)
+        const resolved = resolveCategory({ ...t, user_category: null },
+          testCtx(cats, [rule('Safeway', picked.id)]))
+        expect({ pfc_primary, pfc_detailed, picked: picked.name, learned: learned !== null })
+          .toEqual({ pfc_primary, pfc_detailed, picked: picked.name, learned: changedByRule(resolved) })
+        if (learned) taught++
+      }
+    }
+    expect(taught).toBeGreaterThan(0) // the property must not hold vacuously
   })
 })

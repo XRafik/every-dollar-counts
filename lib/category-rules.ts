@@ -168,3 +168,23 @@ export function resolveCategory(t: CategorizableTxn, ctx: CategoryContext): Reso
 export function changedByRule(r: ResolvedCategory): boolean {
   return r.source === 'rule' && r.name !== r.bankName
 }
+
+export type LearnableRule = { merchantKey: string; merchantLabel: string }
+
+// Whether a hand pick teaches a merchant rule (spec §6.1 step 8), and if so its key and display
+// spelling. The gate is resolveCategory's step 3 exactly, plus "the pick isn't the bank's own
+// category", so a learned rule always relabels the row it was learned from: a pick that agrees with
+// the bank would pin the merchant to a rule that changes nothing (§2.1). `k` must be built from the
+// household's WHOLE category list.
+export function learnableRule(
+  row: { merchant_name: string | null; pfc_primary: string | null; pfc_detailed: string | null },
+  pickedName: string,
+  k: KindContext
+): LearnableRule | null {
+  const key = merchantKey(row.merchant_name)
+  if (!key || isCardPaymentRow(row.pfc_detailed)) return null
+  const bank = bankCategory(row, k)
+  const kind = kindOf(pickedName, k)
+  if (kind !== bank.kind || kind !== kindOf(bank.name, k) || pickedName === bank.name) return null
+  return { merchantKey: key, merchantLabel: (row.merchant_name ?? '').trim() }
+}
