@@ -7,9 +7,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 // - update() resolves only through two .eq()s and an .or(); the tests below assert which columns
 //   and values those are (#140 tracks tightening the stand-in itself).
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn() }))
+const { assertEnvMatchesDatabase } = vi.hoisted(() => ({ assertEnvMatchesDatabase: vi.fn() }))
+vi.mock('@/lib/plaid', () => ({ plaidEnv: 'production' }))
+vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: {} }))
+vi.mock('@/lib/app-env', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/app-env')>()),
+  assertEnvMatchesDatabase,
+}))
 
 import { AuthApiError, AuthRetryableFetchError, AuthSessionMissingError, type AuthError } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+import { EnvMismatchError } from '@/lib/app-env'
 import { POST } from '@/app/api/transactions/categorize/route'
 
 type Row = Record<string, unknown>
@@ -35,6 +43,7 @@ function makeSupabase({
   ] as Row[] | null,
   categoriesError = null as Err,
   update = { error: null as Err, count: 1 as number | null },
+  upsert = { data: [{ id: 'r-new' }] as Row[] | null, error: null as ({ code?: string; message: string } | null) },
 }: Partial<{
   user: { id: string } | null
   authError: AuthError | null
@@ -43,16 +52,28 @@ function makeSupabase({
   categories: Row[] | null
   categoriesError: Err
   update: { error: Err; count: number | null }
+  upsert: { data: Row[] | null; error: { code?: string; message: string } | null } | 'throw'
 }> = {}) {
   const calls = {
     readColumns: '' as string,
     categories: [] as unknown[][],
     updates: [] as { payload: Row; options: unknown; filters: unknown[][] }[],
+    upserts: [] as { payload: Row; options: unknown; select: string }[],
   }
   const client = {
     // getUser answers { user: null, error } on ANY auth failure, a dropped connection included.
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user }, error: authError }) },
     from: vi.fn((table: string) => {
+      if (table === 'category_rules') {
+        return {
+          upsert: (payload: Row, options: unknown) => ({
+            select: (cols: string) => {
+              calls.upserts.push({ payload, options, select: cols })
+              return upsert === 'throw' ? Promise.reject(new Error('socket hang up')) : Promise.resolve(upsert)
+            },
+          }),
+        }
+      }
       if (table === 'categories') {
         return {
           select: (cols: string) => {
@@ -124,7 +145,9 @@ let logs: unknown[][]
 beforeEach(() => {
   vi.mocked(createClient).mockReset()
   logs = []
-  vi.spyOn(console, 'error').mockImplementation(() => {})
+  assertEnvMatchesDatabase.mockReset().mockResolvedValue(undefined)
+  vi.spyOn(console, 'warn').mockImplementation((...a) => void logs.push(a))
+  vi.spyOn(console, 'error').mockImplementation((...a) => void logs.push(a))
   vi.spyOn(console, 'info').mockImplementation((...a) => void logs.push(a))
 })
 afterEach(() => vi.restoreAllMocks())
@@ -259,7 +282,7 @@ describe('POST /api/transactions/categorize', () => {
     const calls = makeSupabase({ row: ROW })
     const res = await post({ transactionId: 'txn-1', category: '  Grocery  ' })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ ok: true })
+    expect(await res.json()).toEqual({ ok: true, learned: 'created' })
     expect(calls.updates).toEqual([
       {
         payload: { user_category: 'Grocery' },
@@ -315,5 +338,131 @@ describe('POST /api/transactions/categorize', () => {
     makeSupabase({ row: ROW, update })
     await post({ transactionId: 'txn-1', category: 'Grocery' })
     expect(logs.some((l) => l[0] === '[categorize] changed')).toBe(false)
+  })
+})
+
+// #28 spec §6.1 step 8 (PR 3). A first pick for a merchant teaches a household rule; a failed learn
+// never fails the pick, which is already saved.
+describe('POST /api/transactions/categorize: learning', () => {
+  const pick = (category = 'Grocery') => post({ transactionId: 'txn-1', category })
+
+  it('creates the rule with the exact payload and options', async () => {
+    const calls = makeSupabase({ row: ROW })
+    const res = await pick()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, learned: 'created' })
+    expect(calls.upserts).toEqual([{
+      payload: { household_id: 'hh-1', merchant_key: 'safeway', merchant_label: 'Safeway', category_id: 'c2', origin: 'learned' },
+      options: { onConflict: 'household_id,merchant_key', ignoreDuplicates: true },
+      select: 'id',
+    }])
+    expect(logs).toContainEqual(['[categorize] learned', { merchant_key: 'safeway', category: 'Grocery', rule: 'r-new' }])
+  })
+
+  it('learns from a padded merchant name with a trimmed label', async () => {
+    const calls = makeSupabase({ row: { ...ROW, merchant_name: '  SAFEWAY ' } })
+    await pick()
+    expect(calls.upserts[0].payload).toMatchObject({ merchant_key: 'safeway', merchant_label: 'SAFEWAY' })
+  })
+
+  it('learns from a re-pick on an already-picked row', async () => {
+    const calls = makeSupabase({ row: { ...ROW, user_category: 'Food & Drink' } })
+    expect(await (await pick()).json()).toEqual({ ok: true, learned: 'created' })
+    expect(calls.upserts).toHaveLength(1)
+  })
+
+  it('answers exists, with the pick saved, when the merchant already has a rule', async () => {
+    const calls = makeSupabase({ row: ROW, upsert: { data: [], error: null } })
+    const res = await pick()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, learned: 'exists' })
+    expect(calls.updates).toHaveLength(1)
+  })
+
+  it.each([
+    ['a pick across the line', ROW, 'Income'],
+    ['a row with no merchant name', { ...ROW, merchant_name: null }, 'Grocery'],
+    ['a pick equal to the bank category', ROW, 'Food & Drink'],
+  ])('learns nothing from %s', async (_, row, category) => {
+    const calls = makeSupabase({
+      row,
+      categories: [
+        { id: 'c1', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 1 },
+        { id: 'c2', name: 'Grocery', pfc_primary: null, sort_order: 2 },
+        { id: 'c3', name: 'Income', pfc_primary: 'INCOME', sort_order: 3 },
+      ],
+    })
+    const res = await pick(category)
+    expect(await res.json()).toEqual({ ok: true, learned: 'no' })
+    expect(calls.upserts).toHaveLength(0)
+    expect(assertEnvMatchesDatabase).not.toHaveBeenCalled()
+  })
+
+  it('learns nothing from a TRANSFER_OUT row after "Transfer Out" is deleted', async () => {
+    const calls = makeSupabase({
+      row: { ...ROW, pfc_primary: 'TRANSFER_OUT', pfc_detailed: 'TRANSFER_OUT_ACCOUNT_TRANSFER' },
+      categories: [
+        { id: 'c1', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 1 },
+        { id: 'c2', name: 'Grocery', pfc_primary: null, sort_order: 2 },
+        { id: 'c4', name: 'Transfer In', pfc_primary: 'TRANSFER_IN', sort_order: 4 },
+      ],
+    })
+    expect(await (await pick('Grocery')).json()).toEqual({ ok: true, learned: 'no' })
+    expect(await (await pick('Transfer In')).json()).toEqual({ ok: true, learned: 'no' })
+    expect(calls.upserts).toHaveLength(0)
+  })
+
+  it('answers 400 on a card payment, with no upsert', async () => {
+    const calls = makeSupabase({ row: { ...ROW, pfc_primary: 'LOAN_PAYMENTS', pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' } })
+    expect((await pick()).status).toBe(400)
+    expect(calls.upserts).toHaveLength(0)
+  })
+
+  it.each([
+    ['a failed write', { error: { message: 'boom' }, count: null }],
+    ['a write that matched no rows', { error: null, count: 0 }],
+  ])('learns nothing after %s', async (_, update) => {
+    const calls = makeSupabase({ row: ROW, update })
+    await pick()
+    expect(calls.upserts).toHaveLength(0)
+    expect(assertEnvMatchesDatabase).not.toHaveBeenCalled()
+  })
+
+  it('answers 200 failed, with the pick saved, when the insert errors', async () => {
+    const calls = makeSupabase({ row: ROW, upsert: { data: null, error: { code: '23503', message: 'fk violation' } } })
+    const res = await pick()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, learned: 'failed' })
+    expect(calls.updates).toHaveLength(1)
+    expect(logs.some((l) => l[0] === '[categorize] learn failed')).toBe(true)
+    expect(JSON.stringify(await (await pick()).json())).not.toContain('fk violation')
+  })
+
+  it('a thrown insert still answers 200 failed', async () => {
+    makeSupabase({ row: ROW, upsert: 'throw' })
+    const res = await pick()
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, learned: 'failed' })
+    expect(logs.some((l) => l[0] === '[categorize] learn failed')).toBe(true)
+  })
+
+  it('answers 200 skipped on an environment mismatch, with no insert', async () => {
+    assertEnvMatchesDatabase.mockRejectedValueOnce(new EnvMismatchError('sandbox', 'production'))
+    const calls = makeSupabase({ row: ROW })
+    const res = await pick()
+    expect(await res.json()).toEqual({ ok: true, learned: 'skipped' })
+    expect(calls.updates).toHaveLength(1)
+    expect(calls.upserts).toHaveLength(0)
+    expect(logs.some((l) => l[0] === '[categorize] learn skipped: environment')).toBe(true)
+  })
+
+  it('answers 200 failed when the environment cannot be read, with no insert', async () => {
+    assertEnvMatchesDatabase.mockRejectedValueOnce(new Error('could not read app_env: timeout'))
+    const calls = makeSupabase({ row: ROW })
+    const res = await pick()
+    expect(await res.json()).toEqual({ ok: true, learned: 'failed' })
+    expect(calls.updates).toHaveLength(1)
+    expect(calls.upserts).toHaveLength(0)
+    expect(logs.some((l) => l[0] === '[categorize] learn failed')).toBe(true)
   })
 })

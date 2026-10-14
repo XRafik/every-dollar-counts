@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server'
 import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
-import { isCardPaymentRow, CREDIT_CARD_PAYMENT_DETAILED } from '@/lib/categories'
+import { isCardPaymentRow, CREDIT_CARD_PAYMENT_DETAILED, type Category } from '@/lib/categories'
+import { buildKindContext, learnableRule } from '@/lib/category-rules'
+import { assertEnvMatchesDatabase, EnvMismatchError } from '@/lib/app-env'
 
 // Sets the category on ONE transaction (#28 spec §6.1). Runs as the user, so RLS decides WHOSE rows;
 // the guards below decide WHICH writes are coherent. Every message here may be shown to a person
 // verbatim (CategoryPicker does), so none carries the database's words; those go to the log.
+//
+// Then, if that pick is the first for its merchant, it teaches a household rule (§6.1 step 8) that
+// files the merchant's other rows the same way at read time. Learning never writes transactions,
+// and a failed learn never fails the pick.
 //
 // What it will not do:
 // - clear a pick (spec decision 7), or write a name that is not one of the household's categories
@@ -48,8 +54,7 @@ export async function POST(req: Request) {
   }
   if (!user) return NextResponse.json({ error: 'Your session ended. Sign in again.' }, { status: 401 })
 
-  // 3. Read the row. Every column here is used below, except merchant_name and pfc_primary, which
-  //    are read for learning (spec §6.1 step 8).
+  // 3. Read the row. merchant_name and pfc_primary are for learning (step 8).
   const { data: row, error: readError } = await supabase
     .from('transactions')
     .select('id, household_id, merchant_name, pfc_primary, pfc_detailed, removed, user_category')
@@ -122,6 +127,66 @@ export async function POST(req: Request) {
   // 7. A record of every change, so a mistaken pick can be put back from the logs.
   console.info('[categorize] changed', { id: transactionId, from: row.user_category, to: picked.name })
 
-  // 9. Response (spec §6.1 step 9). Step 8, learning, is not implemented yet.
-  return NextResponse.json({ ok: true })
+  // 8. Learn. After the write, so only a saved pick can teach.
+  const learned = await learn(supabase, row, picked, cats ?? [])
+
+  // 9. `learned` is for tests and logs; the UI shows nothing (spec decision 1).
+  return NextResponse.json({ ok: true, learned })
+}
+
+type Learned = 'created' | 'exists' | 'no' | 'skipped' | 'failed'
+
+// Spec §6.1 step 8. Never throws: the pick is already saved, and a learn that fails must not turn
+// it into an error the picker would roll back.
+async function learn(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  row: { household_id: string; merchant_name: string | null; pfc_primary: string | null; pfc_detailed: string | null },
+  picked: Category,
+  cats: Category[]
+): Promise<Learned> {
+  const rule = learnableRule(row, picked.name, buildKindContext(cats))
+  if (!rule) return 'no'
+
+  // Local and Preview run sandbox against the shared database, and must not create rules that
+  // production then applies.
+  try {
+    await assertEnvMatchesDatabase()
+  } catch (e) {
+    if (e instanceof EnvMismatchError) {
+      console.warn('[categorize] learn skipped: environment', e.message)
+      return 'skipped'
+    }
+    console.error('[categorize] learn failed', e)
+    return 'failed'
+  }
+
+  // INSERT … ON CONFLICT DO NOTHING RETURNING id: a row back means this pick created the rule. None
+  // means the merchant already has one, so this pick stays a one-row exception (decision 3). The
+  // unique (household_id, merchant_key) gives two partners' simultaneous first picks one rule.
+  try {
+    const { data, error } = await supabase
+      .from('category_rules')
+      .upsert(
+        {
+          household_id: row.household_id,
+          merchant_key: rule.merchantKey,
+          merchant_label: rule.merchantLabel,
+          category_id: picked.id,
+          origin: 'learned',
+        },
+        { onConflict: 'household_id,merchant_key', ignoreDuplicates: true }
+      )
+      .select('id')
+    if (error) {
+      // 23503 here is the category deleted between the read and the insert.
+      console.error('[categorize] learn failed', error.code, error.message)
+      return 'failed'
+    }
+    if (!data?.length) return 'exists'
+    console.info('[categorize] learned', { merchant_key: rule.merchantKey, category: picked.name, rule: data[0].id })
+    return 'created'
+  } catch (e) {
+    console.error('[categorize] learn failed', e)
+    return 'failed'
+  }
 }
