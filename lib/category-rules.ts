@@ -154,13 +154,18 @@ export function resolveCategory(t: CategorizableTxn, ctx: CategoryContext): Reso
   const key = merchantKey(t.merchant_name)
   const rule = key ? ctx[RULE_STATE].byKey.get(key) : undefined
   const name = rule ? ctx[RULE_STATE].nameById.get(rule.category_id) : undefined
-  if (rule && name) {
-    const kind = kindOf(name, ctx)
-    if (kind === bank.kind && kind === kindOf(bank.name, ctx)) {
-      return { name, source: 'rule', ruleId: rule.id, bankName: bank.name }
-    }
+  if (rule && name && ruleFits(name, bank, ctx)) {
+    return { name, source: 'rule', ruleId: rule.id, bankName: bank.name }
   }
   return asBank
+}
+
+// resolveCategory step 3's kind gate, shared with learnableRule so the two cannot drift: a rule
+// naming `name` applies only when that name's kind equals both Plaid's kind for the row and the
+// kind of the name the row otherwise shows.
+function ruleFits(name: string, bank: { name: string; kind: Kind }, k: KindContext): boolean {
+  const kind = kindOf(name, k)
+  return kind === bank.kind && kind === kindOf(bank.name, k)
 }
 
 // A rule that relabelled the row, as opposed to one that agrees with the bank. Drives the learned
@@ -172,10 +177,11 @@ export function changedByRule(r: ResolvedCategory): boolean {
 export type LearnableRule = { merchantKey: string; merchantLabel: string }
 
 // Whether a hand pick teaches a merchant rule (spec §6.1 step 8), and if so its key and display
-// spelling. The gate is resolveCategory's step 3 exactly, plus "the pick isn't the bank's own
-// category", so a learned rule always relabels the row it was learned from: a pick that agrees with
-// the bank would pin the merchant to a rule that changes nothing (§2.1). `k` must be built from the
-// household's WHOLE category list.
+// spelling. The gate is resolveCategory's own for a rule (spec §5.3 steps 3–4: never on a card
+// payment, and ruleFits: the pick's kind must equal both Plaid's kind for the row and the kind of the
+// name the row shows), plus "the pick isn't the bank's own category". So a learned rule always
+// relabels the row it was learned from: a pick that agrees with the bank would pin the merchant to a
+// rule that changes nothing (§2.1). `k` must be built from the household's WHOLE category list.
 export function learnableRule(
   row: { merchant_name: string | null; pfc_primary: string | null; pfc_detailed: string | null },
   pickedName: string,
@@ -184,7 +190,6 @@ export function learnableRule(
   const key = merchantKey(row.merchant_name)
   if (!key || isCardPaymentRow(row.pfc_detailed)) return null
   const bank = bankCategory(row, k)
-  const kind = kindOf(pickedName, k)
-  if (kind !== bank.kind || kind !== kindOf(bank.name, k) || pickedName === bank.name) return null
+  if (!ruleFits(pickedName, bank, k) || pickedName === bank.name) return null
   return { merchantKey: key, merchantLabel: (row.merchant_name ?? '').trim() }
 }

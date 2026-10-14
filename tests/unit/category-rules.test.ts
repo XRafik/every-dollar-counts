@@ -172,11 +172,12 @@ describe('buildCategoryContext', () => {
   })
 })
 
-// #28 spec §6.1 step 8: whether a pick teaches. The gate is resolveCategory's own (§5.3 step 4), so
-// a learned rule always relabels the row it was learned from (decision 4, §2.1).
+// #28 spec §6.1 step 8: whether a pick teaches. The gate is resolveCategory's own for a rule
+// (§5.3 steps 3–4) plus "the pick isn't the bank's category", so a learned rule always relabels the
+// row it was learned from (decision 4, §2.1).
 describe('learnableRule', () => {
   const k = buildKindContext(DEFAULTS)
-  // learnableRule never looks at user_category: a re-pick teaches like a first pick (Task 2).
+  // learnableRule never looks at user_category: a re-pick teaches like a first pick.
   const txn = row
 
   it('teaches a same-kind pick that differs from the bank', () => {
@@ -236,7 +237,8 @@ describe('learnableRule', () => {
   // when the rule it would create relabels that same row once the pick is gone.
   it('agrees with resolveCategory on every row, pick and category set', () => {
     const sets = [DEFAULTS, without('Income'), without('Transfer In'), without('Transfer Out'),
-      [...DEFAULTS, cat('Uncategorized', null, 200)]]
+      [...DEFAULTS, cat('Uncategorized', null, 200)],
+      [...without('Income'), cat('Uncategorized', 'INCOME', 200)]]
     const primaries = ['FOOD_AND_DRINK', 'INCOME', 'TRANSFER_IN', 'TRANSFER_OUT', 'LOAN_PAYMENTS',
       'LOAN_DISBURSEMENTS', null]
     const details = [null, 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT']
