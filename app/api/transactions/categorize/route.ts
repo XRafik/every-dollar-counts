@@ -144,7 +144,13 @@ async function learn(
   picked: Category,
   cats: Category[]
 ): Promise<Learned> {
-  const rule = learnableRule(row, picked.name, buildKindContext(cats))
+  let rule: ReturnType<typeof learnableRule>
+  try {
+    rule = learnableRule(row, picked.name, buildKindContext(cats))
+  } catch (e) {
+    console.error('[categorize] learn failed', e)
+    return 'failed'
+  }
   if (!rule) return 'no'
 
   // Local and Preview run sandbox against the shared database, and must not create rules that

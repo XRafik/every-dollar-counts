@@ -14,6 +14,16 @@ vi.mock('@/lib/app-env', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/app-env')>()),
   assertEnvMatchesDatabase,
 }))
+// learnableRule is the real gate unless a test makes it throw; beforeEach puts the real one back.
+const { learnableRule, realGate } = vi.hoisted(() => ({
+  learnableRule: vi.fn(),
+  realGate: { fn: null as null | ((...a: never[]) => unknown) },
+}))
+vi.mock('@/lib/category-rules', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/category-rules')>()
+  realGate.fn = real.learnableRule as (...a: never[]) => unknown
+  return { ...real, learnableRule }
+})
 
 import { AuthApiError, AuthRetryableFetchError, AuthSessionMissingError, type AuthError } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
@@ -146,6 +156,7 @@ beforeEach(() => {
   vi.mocked(createClient).mockReset()
   logs = []
   assertEnvMatchesDatabase.mockReset().mockResolvedValue(undefined)
+  learnableRule.mockReset().mockImplementation(realGate.fn!)
   vi.spyOn(console, 'warn').mockImplementation((...a) => void logs.push(a))
   vi.spyOn(console, 'error').mockImplementation((...a) => void logs.push(a))
   vi.spyOn(console, 'info').mockImplementation((...a) => void logs.push(a))
@@ -460,6 +471,17 @@ describe('POST /api/transactions/categorize: learning', () => {
     assertEnvMatchesDatabase.mockRejectedValueOnce(new Error('could not read app_env: timeout'))
     const calls = makeSupabase({ row: ROW })
     const res = await pick()
+    expect(await res.json()).toEqual({ ok: true, learned: 'failed' })
+    expect(calls.updates).toHaveLength(1)
+    expect(calls.upserts).toHaveLength(0)
+    expect(logs.some((l) => l[0] === '[categorize] learn failed')).toBe(true)
+  })
+
+  it('a gate that throws still answers 200 failed, with the pick saved', async () => {
+    learnableRule.mockImplementationOnce(() => { throw new Error('boom') })
+    const calls = makeSupabase({ row: ROW })
+    const res = await pick()
+    expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true, learned: 'failed' })
     expect(calls.updates).toHaveLength(1)
     expect(calls.upserts).toHaveLength(0)
