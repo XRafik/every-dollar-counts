@@ -504,9 +504,9 @@ A new client component, `components/CategoryRulesCard.tsx`, rendered in `<Card i
   - Below `sm` the row takes two lines, so nothing is wider than a phone.
 - **Change** saves on select, rolling back with an inline alert on failure. There's no confirmation, because picking again undoes it.
 - **Remove** opens `ConfirmDialog`, with title "Remove the Safeway rule?" and confirm label "Remove". The body shows only the lines that apply:
-  - "145 Safeway transactions go back to their bank's category." (omitted when the count is 0)
-  - "14 you picked by hand keep theirs." (omitted when the count is 0)
-  - "The next category you pick for Safeway will teach the app again."
+  - "145 Safeway transactions go back to the categories their bank gave them." (omitted when the count is 0)
+  - "14 you set yourself stay as they are." (omitted when the count is 0)
+  - "To make a new rule later, pick a category on any Safeway transaction." (reworded 2026-10-14 after the owner's phone check: "teach the app again" was unclear)
 - **No current transactions.** A rule whose key matches no non-removed row shows "No current transactions" and its origin. That happens when a bank is disconnected or Plaid renamed the merchant, and the label keeps it from looking broken. Its Remove dialog adds: "No Safeway transactions are showing right now — for example, if a bank is disconnected."
 - **Empty state:** "Nothing learned yet. Pick a category on a transaction and the app will remember it for that merchant."
 - **Mutations** use `fetch` then `router.refresh()`, the repo's pattern; there are no Server Actions. The §8.2 success rule applies: `res.ok`, not redirected, and a JSON `ok: true`.

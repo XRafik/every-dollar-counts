@@ -126,7 +126,7 @@ export async function PATCH(req: Request) {
 }
 
 // Remove: forget the rule (spec decision 6). Its rows go back to their bank category, hand picks
-// keep theirs, and the merchant's next pick teaches again.
+// stay as they are, and the merchant's next pick makes a new rule.
 export async function DELETE(req: Request) {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null
   const id = text(body?.id)

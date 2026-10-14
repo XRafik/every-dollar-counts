@@ -199,16 +199,16 @@ describe('CategoryRulesCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('Remove the Safeway rule?')).toBeTruthy()
-    expect(within(dialog).getByText('145 Safeway transactions go back to their bank’s category.')).toBeTruthy()
-    expect(within(dialog).queryByText(/picked by hand|keep theirs/)).toBeNull()
-    expect(within(dialog).getByText('The next category you pick for Safeway will teach the app again.')).toBeTruthy()
+    expect(within(dialog).getByText('145 Safeway transactions go back to the categories their bank gave them.')).toBeTruthy()
+    expect(within(dialog).queryByText(/you set yourself/)).toBeNull()
+    expect(within(dialog).getByText('To make a new rule later, pick a category on any Safeway transaction.')).toBeTruthy()
   })
 
   it("Remove's dialog says the next pick teaches even with no current transactions", () => {
     render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
-    expect(within(dialog).getByText('The next category you pick for Safeway will teach the app again.')).toBeTruthy()
+    expect(within(dialog).getByText('To make a new rule later, pick a category on any Safeway transaction.')).toBeTruthy()
     expect(
       within(dialog).getByText('No Safeway transactions are showing right now — for example, if a bank is disconnected.')
     ).toBeTruthy()
@@ -218,16 +218,16 @@ describe('CategoryRulesCard', () => {
     render(<CategoryRulesCard rules={[safeway({ changed: 1, pickedByHand: 1, matching: 2 })]} categories={CATS} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
-    expect(within(dialog).getByText('1 Safeway transaction goes back to its bank’s category.')).toBeTruthy()
-    expect(within(dialog).getByText('1 you picked by hand keeps its category.')).toBeTruthy()
+    expect(within(dialog).getByText('1 Safeway transaction goes back to the category its bank gave it.')).toBeTruthy()
+    expect(within(dialog).getByText('1 you set yourself stays as it is.')).toBeTruthy()
   })
 
-  it("Remove's dialog says how many hand picks keep theirs", () => {
+  it("Remove's dialog says how many hand picks stay as they are", () => {
     render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
-    expect(within(dialog).getByText('145 Safeway transactions go back to their bank’s category.')).toBeTruthy()
-    expect(within(dialog).getByText('14 you picked by hand keep theirs.')).toBeTruthy()
+    expect(within(dialog).getByText('145 Safeway transactions go back to the categories their bank gave them.')).toBeTruthy()
+    expect(within(dialog).getByText('14 you set yourself stay as they are.')).toBeTruthy()
   })
 
   it("Remove's dialog explains a rule with no current transactions", () => {

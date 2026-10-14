@@ -204,11 +204,11 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
           void send('DELETE', { id: rule.id, expectedCategoryId: rule.categoryId })
         }}
       >
-        {rule.changed === 1 && <p>1 {label} transaction goes back to its bank’s category.</p>}
-        {rule.changed > 1 && <p>{rule.changed} {label} transactions go back to their bank’s category.</p>}
-        {rule.pickedByHand === 1 && <p>1 you picked by hand keeps its category.</p>}
-        {rule.pickedByHand > 1 && <p>{rule.pickedByHand} you picked by hand keep theirs.</p>}
-        <p>The next category you pick for {label} will teach the app again.</p>
+        {rule.changed === 1 && <p>1 {label} transaction goes back to the category its bank gave it.</p>}
+        {rule.changed > 1 && <p>{rule.changed} {label} transactions go back to the categories their bank gave them.</p>}
+        {rule.pickedByHand === 1 && <p>1 you set yourself stays as it is.</p>}
+        {rule.pickedByHand > 1 && <p>{rule.pickedByHand} you set yourself stay as they are.</p>}
+        <p>To make a new rule later, pick a category on any {label} transaction.</p>
         {rule.matching === 0 && (
           <p>No {label} transactions are showing right now — for example, if a bank is disconnected.</p>
         )}
