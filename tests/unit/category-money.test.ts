@@ -3,15 +3,16 @@ import { monthlyFlows, type FlowTxn } from '@/lib/dashboard'
 import { spendByCategory } from '@/lib/budget'
 import { buildSpendContext } from '@/lib/spend-context'
 import type { Category } from '@/lib/categories'
-import type { CategoryRule } from '@/lib/category-rules'
-import { DEFAULTS, GROCERY, cat, rule, testData } from './helpers/category-context'
+import { catalogFingerprint, type CategoryRule, type SuggestionRef } from '@/lib/category-rules'
+import { DEFAULTS, GROCERY, cat, rule, sug, testData } from './helpers/category-context'
 
-// #28 spec §5.4: rules change only which category a dollar sits in. No set of rules may change
-// Spent, Income or Saved, for any set of categories, including ones with a default Income or
-// Transfer category deleted and one named "Uncategorized".
+// #28 spec §5.4 and §14.3: rules and Jev's suggestions change only which category a dollar sits
+// in. No set of rules or suggestions may change Spent, Income or Saved, for any set of categories,
+// including ones with a default Income or Transfer category deleted and one named "Uncategorized".
 const MONTHS = [{ key: '2026-09', label: 'Sep' }]
-const r = (id: string, merchant_name: string | null, amount: number, pfc_primary: string | null, over: Partial<FlowTxn> = {}): FlowTxn & { reimbursable_amount: number | null } => ({
-  id, date: '2026-09-10', amount, merchant_name, user_category: null, pfc_primary, pfc_detailed: null, reimbursable_amount: null, ...over,
+type Row = FlowTxn & { reimbursable_amount: number | null; suggestion: SuggestionRef | null }
+const r = (id: string, merchant_name: string | null, amount: number, pfc_primary: string | null, over: Partial<Row> = {}): Row => ({
+  id, date: '2026-09-10', amount, merchant_name, user_category: null, pfc_primary, pfc_detailed: null, reimbursable_amount: null, suggestion: null, ...over,
 })
 const ROWS = [
   r('a', 'Safeway', 50, 'FOOD_AND_DRINK'),
@@ -36,10 +37,10 @@ const SETS: [string, Category[]][] = [
   ['a category named Uncategorized', [...DEFAULTS, cat('Uncategorized', null, 300)]],
 ]
 
-function totals(categories: Category[], rules: CategoryRule[]) {
-  const ctx = buildSpendContext({ data: testData(categories, rules), txns: ROWS })
-  const [m] = monthlyFlows(ROWS, ctx, MONTHS)
-  const byCat = spendByCategory(ROWS, ctx)
+function totals(categories: Category[], rules: CategoryRule[], rows: Row[] = ROWS) {
+  const ctx = buildSpendContext({ data: testData(categories, rules), txns: rows })
+  const [m] = monthlyFlows(rows, ctx, MONTHS)
+  const byCat = spendByCategory(rows, ctx)
   return { spending: m.spending, income: m.income, spent: Object.values(byCat).reduce((s, v) => s + v, 0), byCat }
 }
 
@@ -84,4 +85,43 @@ describe('rules and money', () => {
       }
     })
   }
+})
+
+// testData switches suggestions on by default, so every suggestion below is live: current
+// fingerprint, confidence 0.99. Only the kind gate and the card-payment exemption hold the line.
+const suggestAll = (categoryId: string, fp: string) => ROWS.map((x) => ({ ...x, suggestion: sug(categoryId, 0.99, fp) }))
+
+describe('suggestions and money', () => {
+  // The suggestions really apply, so the property below is not vacuous.
+  it('moves every unpicked spending row into the suggested category', () => {
+    const after = totals(DEFAULTS, [], suggestAll(GROCERY.id, catalogFingerprint(DEFAULTS))).byCat
+    expect(after['Food & Drink']).toBeUndefined()
+    expect(after.Shopping).toBeUndefined()
+    expect(after.Uncategorized).toBeUndefined()
+    expect(after.Grocery).toBeCloseTo(40 + 30 - 1000, 2) // Safeway net, row k, the unmapped Lender inflow
+    expect(after.Travel).toBe(12) // the hand pick stays
+  })
+
+  for (const [label, cats] of SETS) {
+    it(`never moves Spent or Income for every row suggested into any one category, over ${label}`, () => {
+      const before = totals(cats, [])
+      const fp = catalogFingerprint(cats)
+      for (const c of cats) {
+        const after = totals(cats, [], suggestAll(c.id, fp))
+        expect(after.spending, `→ ${c.name}`).toBeCloseTo(before.spending, 2)
+        expect(after.income, `→ ${c.name}`).toBeCloseTo(before.income, 2)
+        expect(after.spent, `→ ${c.name}`).toBeCloseTo(before.spent, 2)
+      }
+    })
+  }
+
+  it('keeps Spent unchanged when every row is suggested into a transfer category', () => {
+    const before = totals(DEFAULTS, [])
+    const fp = catalogFingerprint(DEFAULTS)
+    for (const name of ['Transfer In', 'Transfer Out']) {
+      const after = totals(DEFAULTS, [], suggestAll(`c-${name}`, fp))
+      expect(after.spending, name).toBeCloseTo(before.spending, 2)
+      expect(after.spent, name).toBeCloseTo(before.spent, 2)
+    }
+  })
 })

@@ -18,20 +18,20 @@ const categories: Category[] = [
 // living on the transaction itself rather than in a side table.
 const txns: Txn[] = [
   // plain spending
-  { id: 'a', amount: 120, date: '2026-07-02', merchant_name: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: null },
+  { id: 'a', amount: 120, date: '2026-07-02', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: null },
   // partly reimbursable: $500 dinner, $400 back from work
-  { id: 'b', amount: 500, date: '2026-07-04', merchant_name: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: 400 },
+  { id: 'b', amount: 500, date: '2026-07-04', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: 400 },
   // fully reimbursable outflow
-  { id: 'c', amount: 300, date: '2026-07-06', merchant_name: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null, reimbursable_amount: 300 },
+  { id: 'c', amount: 300, date: '2026-07-06', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null, reimbursable_amount: 300 },
   // a genuine refund, NOT reimbursable — must still net down Travel
-  { id: 'd', amount: -50, date: '2026-07-08', merchant_name: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null, reimbursable_amount: null },
+  { id: 'd', amount: -50, date: '2026-07-08', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null, reimbursable_amount: null },
   // a tagged repayment, deliberately in a SPENDING category: untagged it would net Travel down by
   // 400 like a refund, so this is what proves tagging makes it flow-neutral
-  { id: 'e', amount: -400, date: '2026-07-10', merchant_name: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null, reimbursable_amount: 400 },
+  { id: 'e', amount: -400, date: '2026-07-10', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null, reimbursable_amount: 400 },
   // real income
-  { id: 'f', amount: -2000, date: '2026-07-12', merchant_name: null, user_category: null, pfc_primary: 'INCOME', pfc_detailed: null, reimbursable_amount: null },
+  { id: 'f', amount: -2000, date: '2026-07-12', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'INCOME', pfc_detailed: null, reimbursable_amount: null },
   // a credit-card payment, excluded from both sides
-  { id: 'g', amount: 900, date: '2026-07-14', merchant_name: null, user_category: null, pfc_primary: 'LOAN_PAYMENTS', pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT', reimbursable_amount: null },
+  { id: 'g', amount: 900, date: '2026-07-14', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'LOAN_PAYMENTS', pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT', reimbursable_amount: null },
 ]
 
 describe('reimbursement reconciliation', () => {

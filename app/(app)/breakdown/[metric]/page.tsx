@@ -15,7 +15,7 @@ import {
 } from '@/lib/dashboard'
 import { listManualAssets } from '@/lib/manual-assets'
 import { spendByCategory, monthKey } from '@/lib/budget'
-import { fetchCategoryContext } from '@/lib/category-context'
+import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/category-context'
 import { buildSpendContext } from '@/lib/spend-context'
 import { fetchReceivable } from '@/lib/receivable'
 import { todayIn } from '@/lib/clock'
@@ -149,7 +149,7 @@ export default async function BreakdownPage({ params }: { params: Promise<{ metr
     const { data: flowTxns, error: flowError } = await readAllRows(() =>
       supabase
         .from('transactions')
-        .select('id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount')
+        .select(`id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount, ${SUGGESTION_EMBED}`)
         .eq('removed', false)
         .gte('date', readFrom)
     )
@@ -157,7 +157,7 @@ export default async function BreakdownPage({ params }: { params: Promise<{ metr
 
     // The reimbursable map is built straight from this page's own transaction rows — see
     // buildSpendContext.
-    const allRows = flowTxns ?? []
+    const allRows = withSuggestion(flowTxns ?? [])
     const ctx = buildSpendContext({ data, txns: allRows })
     const monthTxns = allRows.filter((t) => monthKey(t.date) === thisKey)
 

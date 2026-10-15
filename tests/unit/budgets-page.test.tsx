@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-const { calls, tz, results } = vi.hoisted(() => ({
+const { calls, tz, results, selects } = vi.hoisted(() => ({
+  // Every `.select()` the page sends, per table, so a test can pin the suggestion embed (§7.4).
+  selects: {} as Record<string, string[]>,
   calls: { gte: [] as string[], lt: [] as string[] },
   tz: { value: 'America/New_York' },
   results: {} as Record<string, { data: unknown; error: { message: string } | null }>,
@@ -12,6 +14,10 @@ const { calls, tz, results } = vi.hoisted(() => ({
 const chainFor = (table: string) => {
   const chain: Record<string, unknown> = {}
   for (const m of ['select', 'order', 'eq', 'limit']) chain[m] = () => chain
+  chain.select = (cols: string) => {
+    (selects[table] ??= []).push(cols)
+    return chain
+  }
   // readAllRows (lib/read-all.ts) asks for the rows after its cursor with .or(); there are none
   // past this fixture, so a continuation page is empty and the read ends.
   let afterCursor = false
@@ -40,15 +46,20 @@ vi.mock('@/lib/supabase/server', () => ({
 // Categories and rules come through lib/category-context.ts (#28), whose own test covers paging.
 // Built from `results.categories` / `results.category_rules`, so a failed categories read still
 // rejects with the page's message.
-vi.mock('@/lib/category-context', async () => {
+// The real module otherwise, so the page gets the real SUGGESTION_EMBED and the switch is read by
+// the real suggestionsEnabled (spec §14.7). Its admin client is never used here.
+vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: {} }))
+vi.mock('@/lib/category-context', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/category-context')>()
   const { testData } = await import('./helpers/category-context')
   return {
+    ...actual,
     fetchCategoryContext: async () => {
       const c = results.categories ?? { data: [], error: null }
       if (c.error) throw new Error(`could not read categories: ${c.error.message}`)
       const r = results.category_rules ?? { data: [], error: null }
       if (r.error) throw new Error(`could not read category rules: ${r.error.message}`)
-      return testData(c.data as never, r.data as never)
+      return testData(c.data as never, r.data as never, { suggestionsOn: actual.suggestionsEnabled() })
     },
     readTransactionsForCounts: async () => {
       const t = results.transactions ?? { data: [], error: null }
@@ -64,6 +75,8 @@ vi.mock('@/lib/household', () => ({
 
 import BudgetsPage from '@/app/(app)/budgets/page'
 import { BudgetEditor } from '@/components/BudgetEditor'
+import { catalogFingerprint } from '@/lib/category-rules'
+import { sug } from './helpers/category-context'
 
 const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
 const GROCERY = { id: 'c-grocery', name: 'Grocery', pfc_primary: null, sort_order: 1 }
@@ -92,6 +105,12 @@ beforeEach(() => {
   calls.lt = []
   tz.value = 'America/New_York'
   for (const k of Object.keys(results)) delete results[k]
+  for (const k of Object.keys(selects)) delete selects[k]
+  vi.unstubAllEnvs()
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 describe('Budgets month window', () => {
@@ -132,6 +151,50 @@ describe('Budgets categories and rules (#28)', () => {
     }
     const props = findProps(await BudgetsPage(), BudgetEditor)
     expect(props?.spend).toEqual({ Grocery: 42 })
+  })
+
+  // Spec §14.3/§14.7: a Whole Foods row with no rule takes Jev's confident suggestion, and only
+  // while CATEGORY_SUGGESTIONS is on.
+  const wholeFoods = (suggestion: unknown) => ({
+    id: 't2', amount: 30, date: '2026-09-11', merchant_name: 'Whole Foods', user_category: null,
+    pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: null, suggestion,
+  })
+  const spendWith = async (rows: unknown[]) => {
+    vi.setSystemTime(new Date('2026-09-15T12:00:00Z'))
+    results.categories = { data: [FOOD, GROCERY], error: null }
+    results.category_rules = { data: [], error: null }
+    results.transactions = { data: rows, error: null }
+    return findProps(await BudgetsPage(), BudgetEditor)?.spend
+  }
+
+  it('files Whole Foods under Grocery through its suggestion when suggestions are on', async () => {
+    vi.stubEnv('CATEGORY_SUGGESTIONS', 'on')
+    const spend = await spendWith([wholeFoods(sug(GROCERY.id, 0.99, catalogFingerprint([FOOD, GROCERY])))])
+    expect(spend).toEqual({ Grocery: 30 })
+  })
+
+  it('leaves Whole Foods under Food & Drink when suggestions are off', async () => {
+    vi.stubEnv('CATEGORY_SUGGESTIONS', undefined)
+    const spend = await spendWith([wholeFoods(sug(GROCERY.id, 0.99, catalogFingerprint([FOOD, GROCERY])))])
+    expect(spend).toEqual({ 'Food & Drink': 30 })
+  })
+
+  // Review Focus 5: switching on changes nothing for rows that carry no suggestion.
+  it('renders the same with the switch on as off when no row has a suggestion', async () => {
+    const rows = [wholeFoods(null), { ...wholeFoods(null), id: 't3', merchant_name: 'Safeway', amount: 12 }]
+    vi.stubEnv('CATEGORY_SUGGESTIONS', 'on')
+    const on = await spendWith(rows)
+    vi.stubEnv('CATEGORY_SUGGESTIONS', undefined)
+    const off = await spendWith(rows)
+    expect(on).toEqual({ 'Food & Drink': 42 })
+    expect(on).toEqual(off)
+  })
+
+  // Spec §7.4's coverage guard: every transactions read the page resolves carries the embed.
+  it('selects each transaction\'s suggestion', async () => {
+    await spendWith([])
+    expect(selects.transactions?.length).toBeGreaterThan(0)
+    for (const cols of selects.transactions) expect(cols).toContain('category_suggestions(')
   })
 
   // A failed rules read rendered as "no rules" would quietly move every learned label back (#46).

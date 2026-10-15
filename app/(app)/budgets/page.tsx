@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { spendByCategory } from '@/lib/budget'
 import { spendingCategoryNames } from '@/lib/categories'
-import { fetchCategoryContext } from '@/lib/category-context'
+import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/category-context'
 import { buildSpendContext } from '@/lib/spend-context'
 import { BudgetEditor } from '@/components/BudgetEditor'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -34,7 +34,7 @@ export default async function BudgetsPage() {
   const { data: txns, error: txnsError } = await readAllRows(() =>
     supabase
       .from('transactions')
-      .select('id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount')
+      .select(`id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount, ${SUGGESTION_EMBED}`)
       .eq('removed', false)
       .gte('date', monthStart)
       .lt('date', nextMonthStart)
@@ -49,7 +49,7 @@ export default async function BudgetsPage() {
 
   // The reimbursable map is built straight from this page's own transaction rows — see
   // buildSpendContext.
-  const rows = txns ?? []
+  const rows = withSuggestion(txns ?? [])
   const ctx = buildSpendContext({ data, txns: rows })
   const spend = spendByCategory(rows, ctx)
   const initialLimits: Record<string, number> = {}

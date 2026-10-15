@@ -4,14 +4,15 @@ import { spendByCategory } from '@/lib/budget'
 import { monthlyFlows } from '@/lib/dashboard'
 import { spendableAmount } from '@/lib/reimbursements'
 import { buildSpendContext } from '@/lib/spend-context'
-import { kindOf } from '@/lib/category-rules'
-import { DEFAULTS, GROCERY, cat, rule, testData } from './helpers/category-context'
+import { buildCategoryContext, catalogFingerprint, changedBySuggestion, kindOf, resolveCategory } from '@/lib/category-rules'
+import { isCreditCardPayment } from '@/lib/categories'
+import { DEFAULTS, GROCERY, cat, rule, sug, testData } from './helpers/category-context'
 
 // #28 spec §7.2. These used to sit inline in pages, where nothing tested them. The parity tests
 // run the real functions against each other: a Breakdown row and the list it opens must add up.
 const r = (id: string, month: string, merchant_name: string | null, amount: number, pfc_primary: string | null, over: Record<string, unknown> = {}) => ({
   id, date: `${month}-10`, amount, merchant_name, user_category: null as string | null, pfc_primary,
-  pfc_detailed: null as string | null, reimbursable_amount: null as number | null, ...over,
+  pfc_detailed: null as string | null, reimbursable_amount: null as number | null, suggestion: null, ...over,
 })
 const ROWS = [
   r('a', '2026-08', 'Safeway', 50, 'FOOD_AND_DRINK'),
@@ -119,6 +120,35 @@ describe('categoryUsage', () => {
     const d = testData(DEFAULTS, [rule('Gone Market', GROCERY.id)])
     expect(categoryUsage(ROWS, d, new Set()).rules['r-gone market']).toEqual({ changed: 0, pickedByHand: 0, matching: 0 })
   })
+
+  // #28 spec §14.6: Settings' "{n} transactions are filed by Jev" counts exactly the rows the marker
+  // shows on.
+  it('counts the rows a suggestion relabels, and nothing else', () => {
+    const fp = catalogFingerprint(DEFAULTS)
+    const toGrocery = { suggestion: sug(GROCERY.id, 0.99, fp) }
+    const rows = [
+      ...ROWS,
+      r('s1', '2026-09', 'Whole Foods', 40, 'FOOD_AND_DRINK', toGrocery), // relabelled
+      r('s2', '2026-09', 'Trader Joes', 30, 'FOOD_AND_DRINK', toGrocery), // relabelled
+      r('s3', '2026-09', 'Deli', 9, 'FOOD_AND_DRINK', { suggestion: sug('c-Food & Drink', 0.99, fp) }), // agrees with the bank
+      r('s4', '2026-09', 'Market', 9, 'FOOD_AND_DRINK', { suggestion: sug(GROCERY.id, 0.2, fp) }), // not confident
+      r('s5', '2026-09', 'Safeway', 9, 'FOOD_AND_DRINK', toGrocery), // the rule wins
+      r('s6', '2026-09', 'Corner', 9, 'FOOD_AND_DRINK', { ...toGrocery, user_category: 'Travel' }), // the pick wins
+      // A card payment is never counted, as in the category counts.
+      r('s7', '2026-09', null, 100, 'LOAN_PAYMENTS', { ...toGrocery, pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' }),
+    ]
+    const sctx = buildCategoryContext(data)
+    const expected = rows.filter((t) => !isCreditCardPayment(t) && changedBySuggestion(resolveCategory(t, sctx))).length
+    expect(expected).toBe(2)
+    expect(categoryUsage(rows, data, new Set()).suggested).toBe(2)
+  })
+
+  it('counts no suggestions with the switch off', () => {
+    const fp = catalogFingerprint(DEFAULTS)
+    const rows = [r('s1', '2026-09', 'Whole Foods', 40, 'FOOD_AND_DRINK', { suggestion: sug(GROCERY.id, 0.99, fp) })]
+    const off = testData(DEFAULTS, [], { suggestionsOn: false })
+    expect(categoryUsage(rows, off, new Set()).suggested).toBe(0)
+  })
 })
 
 describe('deleteImpact', () => {
@@ -153,6 +183,27 @@ describe('deleteImpact', () => {
     // Payments, and as starting to count as spending.
     const transfer = [r('q', '2026-09', 'Chase', 500, 'LOAN_PAYMENTS', { ...card, user_category: 'Transfer Out' })]
     expect(deleteImpact(transfer, testData(DEFAULTS), 'c-Transfer Out')).toMatchObject({ uncategorized: 0, moved: [], movedMore: 0, toSpending: 0 })
+  })
+
+  // Intended (#28 spec §14.6): removing any category changes the catalogue fingerprint, so no
+  // suggestion applies in "after" and a row Jev relabelled shows as moving back to its bank
+  // category. That is what the totals will show until the next sync re-asks Jev.
+  it('counts a row Jev relabelled as moving back to its bank category, with suggestions on', () => {
+    const fp = catalogFingerprint(DEFAULTS)
+    const rows = [r('s', '2026-09', 'Whole Foods', 40, 'FOOD_AND_DRINK', { suggestion: sug(GROCERY.id, 0.99, fp) })]
+    expect(resolveCategory(rows[0], buildCategoryContext(testData(DEFAULTS))).name).toBe('Grocery')
+    expect(deleteImpact(rows, testData(DEFAULTS), 'c-Travel')).toMatchObject({
+      uncategorized: 0,
+      moved: [{ name: 'Food & Drink', count: 1 }],
+      movedMore: 0,
+    })
+  })
+
+  it('counts no move for the same row with suggestions off', () => {
+    const fp = catalogFingerprint(DEFAULTS)
+    const rows = [r('s', '2026-09', 'Whole Foods', 40, 'FOOD_AND_DRINK', { suggestion: sug(GROCERY.id, 0.99, fp) })]
+    const off = testData(DEFAULTS, [], { suggestionsOn: false })
+    expect(deleteImpact(rows, off, 'c-Travel')).toMatchObject({ uncategorized: 0, moved: [], movedMore: 0 })
   })
 
   it('lists the top three destinations and counts the rest as rows', () => {

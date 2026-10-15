@@ -4,6 +4,7 @@ import {
   checkCategoryReads,
   checkRulesReads,
   checkUserCategoryWrites,
+  checkSuggestionWrites,
   checkBrandCasts,
 } from '../../scripts/check-invariants.mjs'
 
@@ -76,6 +77,34 @@ describe('user-category-write', () => {
   })
   it('passes an inline write that does not touch user_category', () => {
     expect(checkUserCategoryWrites(file('app/api/reimbursable/route.ts', `supabase.from('transactions').update({ reimbursable_amount: 5 }, { count: 'exact' })`))).toEqual([])
+  })
+  it('covers the suggestion job too (#28 spec §14.9)', () => {
+    expect(checks(checkUserCategoryWrites(file('lib/category-suggest.ts', `await supabaseAdmin.from('transactions').update({ user_category: 'x' })`)))).toEqual(['user-category-write'])
+  })
+})
+
+describe('suggestion-write', () => {
+  it.each(['insert', 'upsert', 'update', 'delete'])('fires on .%s() outside lib/category-suggest.ts', (method) => {
+    const src = `await supabaseAdmin.from('category_suggestions').${method}(rows, { count: 'exact' })`
+    const found = checkSuggestionWrites(file('app/api/x/route.ts', src))
+    expect(checks(found)).toEqual(['suggestion-write'])
+    expect(found[0].message).toBe('writes category_suggestions outside lib/category-suggest.ts, the one writer (#28 spec §14.9).')
+  })
+  it('fires on a multi-line chain with a filter before the write', () => {
+    const src = `await supabase
+      .from("category_suggestions")
+      .delete()
+      .eq('household_id', id)`
+    expect(checks(checkSuggestionWrites(file('lib/x.ts', src)))).toEqual(['suggestion-write'])
+  })
+  it('allows the job itself', () => {
+    expect(checkSuggestionWrites(file('lib/category-suggest.ts', `await supabaseAdmin.from('category_suggestions').upsert(rows, { onConflict: 'transaction_id', count: 'exact' })`))).toEqual([])
+  })
+  it('does not fire on a read, anywhere', () => {
+    expect(checkSuggestionWrites(file('app/(app)/x/page.tsx', `supabase.from('category_suggestions').select('transaction_id', { count: 'exact', head: true })`))).toEqual([])
+  })
+  it('ignores a mention in a comment', () => {
+    expect(checkSuggestionWrites(file('lib/x.ts', `// never .from('category_suggestions').delete() here`))).toEqual([])
   })
 })
 

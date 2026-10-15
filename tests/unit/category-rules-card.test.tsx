@@ -35,14 +35,14 @@ const reply = (ok: boolean, body: unknown, status = ok ? 200 : 409) => ({ ok, st
 
 describe('CategoryRulesCard', () => {
   it('offers only categories of the same kind', () => {
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     const options = within(screen.getByRole('combobox', { name: 'Category for Safeway' })).getAllByRole('option')
     expect(options.map((o) => o.textContent)).toEqual(['Food & Drink', 'Grocery'])
   })
 
   // A long merchant name truncates; the count, which is the point of the row, never does.
   it('stacks below sm and never truncates the count', () => {
-    render(<CategoryRulesCard rules={[safeway({ merchantLabel: 'A very long merchant name that will not fit on a phone' })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ merchantLabel: 'A very long merchant name that will not fit on a phone' })]} categories={CATS} suggestedCount={null} />)
     const line = countLine()
     expect(line.textContent).toBe('145 changed by this rule · 14 set by you')
     expect(line.closest('.truncate')).toBeNull()
@@ -64,7 +64,7 @@ describe('CategoryRulesCard', () => {
   })
 
   it('explains that a pick teaches', () => {
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     expect(
       screen.getByText(
         "When you pick a category for a merchant the app hasn't learned yet, it files that merchant's other transactions the same way, past and future. It never moves money between spending, transfers and income, and never touches card payments."
@@ -72,13 +72,32 @@ describe('CategoryRulesCard', () => {
     ).toBeTruthy()
   })
 
+  // #28 spec §14.6: one line under the help text, only while suggestions are on.
+  it.each([
+    [0, 'For merchants without a rule, Jev suggests a category. 0 transactions are filed by Jev.'],
+    [1, 'For merchants without a rule, Jev suggests a category. 1 transaction is filed by Jev.'],
+    [2, 'For merchants without a rule, Jev suggests a category. 2 transactions are filed by Jev.'],
+  ])('says how many transactions Jev filed (%i)', (n, text) => {
+    const { container } = render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={n} />)
+    const line = screen.getByText(text)
+    expect(line.tagName).toBe('P')
+    expect(line.className).toBe('text-sm text-muted')
+    // Directly under the help text.
+    expect(container.firstElementChild!.children[1]).toBe(line)
+  })
+
+  it('shows no Jev line while suggestions are off', () => {
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
+    expect(screen.queryByText(/Jev/)).toBeNull()
+  })
+
   it('omits the hand-pick count when it is zero', () => {
-    render(<CategoryRulesCard rules={[safeway({ pickedByHand: 0 })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ pickedByHand: 0 })]} categories={CATS} suggestedCount={null} />)
     expect(countLine().textContent).toBe('145 changed by this rule')
   })
 
   it('shows a rule with no current transactions as such', () => {
-    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} suggestedCount={null} />)
     const line = countLine()
     expect(line.textContent).toBe('No current transactions · set up from your earlier picks')
     // Wider than a 360px phone's content box on one line, so it must be able to break at " · ".
@@ -86,7 +105,7 @@ describe('CategoryRulesCard', () => {
   })
 
   it('shows the empty state', () => {
-    render(<CategoryRulesCard rules={[]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[]} categories={CATS} suggestedCount={null} />)
     expect(
       screen.getByText('Nothing learned yet. Pick a category on a transaction and the app will remember it for that merchant.')
     ).toBeTruthy()
@@ -95,7 +114,7 @@ describe('CategoryRulesCard', () => {
   it('Changes with the category it was showing, and refreshes', async () => {
     const fetchMock = vi.fn().mockResolvedValue(reply(true, { ok: true }))
     vi.stubGlobal('fetch', fetchMock)
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     await waitFor(() => expect(refresh).toHaveBeenCalled())
     expect(fetchMock).toHaveBeenCalledWith('/api/category-rules', expect.objectContaining({ method: 'PATCH' }))
@@ -104,7 +123,7 @@ describe('CategoryRulesCard', () => {
 
   it('rolls back with the route message on a refused Change, without refreshing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply(false, { error: 'That category is not one of yours.' }, 400)))
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     expect((await screen.findByRole('alert')).textContent).toBe('That category is not one of yours.')
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-grocery')
@@ -114,7 +133,7 @@ describe('CategoryRulesCard', () => {
   // 404 and 409 are the server saying this card is stale: keep its message and show the latest.
   it.each([404, 409])('shows the route message and refreshes on a %i refusal', async (status) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply(false, { error: 'This rule just changed. Refresh and try again.' }, status)))
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     expect((await screen.findByRole('alert')).textContent).toBe('This rule just changed. Refresh and try again.')
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-grocery')
@@ -124,7 +143,7 @@ describe('CategoryRulesCard', () => {
   it('says it may not have saved, rolls back and refreshes when the request fails in flight', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     expect((await screen.findByRole('alert')).textContent).toBe('It may not have saved. Showing the latest.')
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-grocery')
@@ -135,7 +154,7 @@ describe('CategoryRulesCard', () => {
   it('disables the select and Remove while a Change is in flight', async () => {
     let settle: (v: unknown) => void = () => {}
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise((r) => (settle = r))))
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true)
     expect((screen.getByRole('button', { name: 'Remove the Safeway rule' }) as HTMLButtonElement).disabled).toBe(true)
@@ -146,7 +165,7 @@ describe('CategoryRulesCard', () => {
 
   // The FK deletes a rule with its category, so a rule whose category is gone raced a delete.
   it('asks for a reload instead of offering Change and Remove when the category was just deleted', () => {
-    render(<CategoryRulesCard rules={[safeway({ categoryId: 'c-gone', categoryName: 'a deleted category' })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ categoryId: 'c-gone', categoryName: 'a deleted category' })]} categories={CATS} suggestedCount={null} />)
     expect(screen.queryByRole('combobox')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Remove the Safeway rule' })).toBeNull()
     const note = screen.getByText(/^This category was just deleted\./)
@@ -157,7 +176,7 @@ describe('CategoryRulesCard', () => {
 
   it('rolls back on a redirected Change and says the session ended', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ...reply(true, { ok: true }), redirected: true }))
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     expect((await screen.findByRole('alert')).textContent).toBe('Your session ended. Sign in again.')
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-grocery')
@@ -168,12 +187,12 @@ describe('CategoryRulesCard', () => {
   // stale choice, and an old alert does not outlive the refresh.
   it("follows the server's category after a refresh, dropping a stale choice and alert", async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply(true, { ok: true })))
-    const { rerender } = render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    const { rerender } = render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     await waitFor(() => expect(refresh).toHaveBeenCalled())
-    rerender(<CategoryRulesCard rules={[safeway({ categoryId: 'c-food', categoryName: 'Food & Drink' })]} categories={CATS} />)
+    rerender(<CategoryRulesCard rules={[safeway({ categoryId: 'c-food', categoryName: 'Food & Drink' })]} categories={CATS} suggestedCount={null} />)
     expect(screen.queryByRole('alert')).toBeNull()
-    rerender(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    rerender(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-grocery')
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -182,20 +201,20 @@ describe('CategoryRulesCard', () => {
   // the select moves, so the alert says why instead of vanishing.
   it.each([404, 409])('keeps a reason when the refresh after a %i refusal brings another category', async (status) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply(false, { error: 'This rule just changed. Refresh and try again.' }, status)))
-    const { rerender } = render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    const { rerender } = render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'c-food' } })
     await screen.findByRole('alert')
     expect(refresh).toHaveBeenCalledTimes(1)
-    rerender(<CategoryRulesCard rules={[safeway({ categoryId: 'c-food', categoryName: 'Food & Drink' })]} categories={CATS} />)
+    rerender(<CategoryRulesCard rules={[safeway({ categoryId: 'c-food', categoryName: 'Food & Drink' })]} categories={CATS} suggestedCount={null} />)
     expect(screen.getByRole('alert').textContent).toBe('This rule was just changed elsewhere. Showing the latest.')
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-food')
     // Consumed: a later change from elsewhere, with no refusal behind it, clears the alert as usual.
-    rerender(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    rerender(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it("Remove's dialog omits zero counts and says the next pick teaches", () => {
-    render(<CategoryRulesCard rules={[safeway({ pickedByHand: 0 })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ pickedByHand: 0 })]} categories={CATS} suggestedCount={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('Remove the Safeway rule?')).toBeTruthy()
@@ -205,7 +224,7 @@ describe('CategoryRulesCard', () => {
   })
 
   it("Remove's dialog says the next pick teaches even with no current transactions", () => {
-    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} suggestedCount={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('To make a new rule later, pick a category on any Safeway transaction.')).toBeTruthy()
@@ -215,7 +234,7 @@ describe('CategoryRulesCard', () => {
   })
 
   it("Remove's dialog speaks of one transaction, and one hand pick, in the singular", () => {
-    render(<CategoryRulesCard rules={[safeway({ changed: 1, pickedByHand: 1, matching: 2 })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ changed: 1, pickedByHand: 1, matching: 2 })]} categories={CATS} suggestedCount={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('1 Safeway transaction goes back to the category its bank gave it.')).toBeTruthy()
@@ -223,7 +242,7 @@ describe('CategoryRulesCard', () => {
   })
 
   it("Remove's dialog says how many hand picks stay as they are", () => {
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('145 Safeway transactions go back to the categories their bank gave them.')).toBeTruthy()
@@ -231,7 +250,7 @@ describe('CategoryRulesCard', () => {
   })
 
   it("Remove's dialog explains a rule with no current transactions", () => {
-    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway({ changed: 0, pickedByHand: 0, matching: 0 })]} categories={CATS} suggestedCount={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     const dialog = screen.getByRole('dialog', { hidden: true })
     expect(within(dialog).getByText('No Safeway transactions are showing right now — for example, if a bank is disconnected.')).toBeTruthy()
@@ -240,7 +259,7 @@ describe('CategoryRulesCard', () => {
   it('Removes with the category it was showing', async () => {
     const fetchMock = vi.fn().mockResolvedValue(reply(true, { ok: true }))
     vi.stubGlobal('fetch', fetchMock)
-    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} />)
+    render(<CategoryRulesCard rules={[safeway()]} categories={CATS} suggestedCount={null} />)
     fireEvent.click(screen.getByRole('button', { name: 'Remove the Safeway rule' }))
     fireEvent.click(within(screen.getByRole('dialog', { hidden: true })).getByRole('button', { name: 'Remove', hidden: true }))
     await waitFor(() => expect(refresh).toHaveBeenCalled())

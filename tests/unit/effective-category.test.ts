@@ -8,6 +8,7 @@ const row = (r: { user_category: string | null; pfc_primary: string | null }) =>
   ...r,
   pfc_detailed: null,
   merchant_name: null,
+  suggestion: null,
 })
 
 describe('effectiveCategory', () => {
@@ -33,7 +34,7 @@ describe('effectiveCategory', () => {
     const withRule = testCtx(DEFAULTS, [rule('Safeway', GROCERY.id)])
     expect(
       effectiveCategory(
-        { user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, merchant_name: 'Safeway' },
+        { user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, merchant_name: 'Safeway', suggestion: null },
         withRule
       )
     ).toBe('Grocery')

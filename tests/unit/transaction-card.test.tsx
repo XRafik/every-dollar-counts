@@ -692,3 +692,40 @@ describe('TransactionCard learned marker (#28)', () => {
     expect(screen.queryByRole('button', { name: /learned from/ })).toBeNull()
   })
 })
+
+describe('TransactionCard suggested marker (#28 §14.6)', () => {
+  const suggested = { name: 'Grocery', source: 'suggestion' as const, ruleId: null, bankName: 'Food & Drink' }
+
+  it('says so in the row and its accessible name, without a link inside the button', () => {
+    render(<TransactionCard t={txn} category={suggested} categoryOptions={['Food', 'Grocery']} />)
+    const button = screen.getByRole('button', { name: /suggested by Jev/ })
+    expect(button.querySelector('a')).toBeNull()
+    expect(button.querySelector('svg')).not.toBeNull()
+  })
+
+  it('shows Suggested by Jev. with the icon in the sheet', () => {
+    render(<TransactionCard t={txn} category={suggested} categoryOptions={['Food', 'Grocery']} />)
+    fireEvent.click(screen.getByRole('button', { name: /edit/ }))
+    const text = screen.getByText('Suggested by Jev.')
+    const line = text.closest('p')!
+    expect(line.querySelector('svg')).not.toBeNull()
+    expect(line.getAttribute('title')).toBe('Grocery, suggested by Jev. Pick a category to change it.')
+    expect(line.querySelector('a')).toBeNull()
+    expect(screen.queryByText(/Learned from/)).toBeNull()
+  })
+
+  it('shows nothing when the suggestion agrees with the bank', () => {
+    render(<TransactionCard t={txn} category={{ ...suggested, name: 'Food & Drink' }} categoryOptions={['Food', 'Grocery']} />)
+    expect(screen.queryByRole('button', { name: /suggested by Jev/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /edit/ }).querySelector('svg')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /edit/ }))
+    expect(screen.queryByText('Suggested by Jev.')).toBeNull()
+  })
+
+  it('a rule row shows no Jev line', () => {
+    render(<TransactionCard t={txn} category={{ ...suggested, source: 'rule', ruleId: 'r1' }} categoryOptions={['Food', 'Grocery']} />)
+    expect(screen.queryByRole('button', { name: /suggested by Jev/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /edit/ }))
+    expect(screen.queryByText('Suggested by Jev.')).toBeNull()
+  })
+})

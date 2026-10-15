@@ -3,7 +3,7 @@
 - **Repo:** `smilne3/every-dollar-counts`
 - **Date:** 2026-09-11
 - **Closes:** #28
-- **Status:** Rules design (§1–§13) approved in brainstorming on 2026-09-11 and revised after an adversarial review. Jev suggestions (§14) added and approved on 2026-10-07. PR 1 merged as #142, PR 2 as #146 (22 rules live since 2026-10-09). PR 3 (learning) is #152.
+- **Status:** Rules design (§1–§13) approved in brainstorming on 2026-09-11 and revised after an adversarial review. Jev suggestions (§14) added and approved on 2026-10-07. PR 1 merged as #142, PR 2 as #146 (22 rules live since 2026-10-09). PR 3 (learning) is #152. PR 4 (Jev suggestions) is built on branch `28-category-rules-pr4`, with the switch off (§14.7).
 - **One line:** The first time you file a merchant under a category, the app remembers it as a household rule and applies it to that merchant's other transactions, past and future. Rules are resolved whenever a page reads, never written onto a transaction, so changing or removing one moves every row with it. For merchants with no rule, Jev (TypeSafe) suggests one of the household's own categories, applied automatically when it is confident and never across spending, transfers and income (§14).
 
 ### Changes since 2026-09-11
@@ -174,11 +174,12 @@ Pure, no I/O.
 ### 5.1 Types
 
 ```ts
-export type CategorizableTxn = {           // all four REQUIRED: a select that omits one fails tsc
+export type CategorizableTxn = {           // all five REQUIRED: a select that omits one fails tsc
   user_category: string | null
   pfc_primary: string | null
   pfc_detailed: string | null
   merchant_name: string | null
+  suggestion: SuggestionRef | null         // PR 4, §14.3
 }
 
 export type CategoryRule = {
@@ -893,19 +894,20 @@ Rules need one pick per merchant, and most merchants are never picked. Plaid's c
 - **Rows:** non-removed, no hand pick, not a card payment (`isCardPaymentRow`), and with a bank kind of `'spending'` (§5.2). Transfer and income kinds are skipped: each side has one meaningful category, and their descriptions carry people's names.
 - **Options:** the household's spending-kind categories (by name, each described with the Plaid primary that maps to it by default), plus `none` ("none of these fits"). `none` stores a suggestion with no category, which resolves to the bank's.
 - **State, per request:**
-  - `household_examples`: one `{ merchant, filed_as }` per merchant the household has decided, from its rules and hand picks, spending kind only, most recent first, capped at 60;
-  - `transactions`: up to 20 rows, each `{ merchant, bank_description, amount_usd, direction, date, bank_category }` (`bank_category` is `pfc_detailed ?? pfc_primary`).
-- **Questions:** one Choice per transaction in the batch, its instructions naming `transactions[i]`: "Which of this household's budget categories should `transactions[i]` be filed under? `household_examples` shows how this household files merchants it has decided; follow its habits."
+  - `household_examples`: one `{ merchant, filed_as }` per merchant the household has decided, spending kind only, capped at 60. Rules come first, in the order they are read (by id); then hand picks for merchants without a rule, newest first;
+  - `transactions`: up to 20 rows, each `{ merchant, bank_description, amount_usd, direction, date, bank_category }`. `merchant` is `merchant_name ?? name`, `direction` is `'out'` only when `amount > 0`, and `bank_category` is `pfc_detailed ?? pfc_primary ?? 'UNKNOWN'`.
+- **Questions:** one Choice per transaction in the batch, keyed by its position (`t0`..`t19`), its instructions naming `transactions[i]`: "Which of this household's budget categories should `transactions[i]` be filed under? `household_examples` shows how this household files merchants it has decided; follow its habits." The job maps answers back by position.
 - **Batching** sends the examples once per 20 rows instead of once per row. Its effect on answers is measured in §14.8 before it is relied on; if batched answers diverge from single ones, batches shrink.
-- **Nothing else is sent:** no account numbers, balances, institution names or household identifiers.
+- **Nothing else is sent:** no account numbers, balances, institution names, household identifiers or transaction ids.
+- **The builder** is `lib/category-suggest-request.ts`: pure, and not server-only, so the §14.8 check builds exactly the requests production sends.
 
 ### 14.3 Resolution
 
-§5.3 step 5. Rows carry their suggestion through an embedded select, so a page makes no extra request: `…, category_suggestions(category_id, confidence, catalog_fingerprint)`. `CategorizableTxn` gains a required `suggestion` field, so a select that drops it fails tsc, as §7.4 does for `merchant_name`.
+§5.3 step 5. Rows carry their suggestion through an embedded select, so a page makes no extra request: `…, suggestion:category_suggestions(category_id, confidence, catalog_fingerprint)`. The `suggestion:` alias is what the row type relies on. `CategorizableTxn` has a required `suggestion` field, so a select that drops it fails tsc, as §7.4 does for `merchant_name`.
 
 - **`changedBySuggestion(r)`** is `r.source === 'suggestion' && r.name !== r.bankName`. It drives the marker.
 - **Money.** A suggestion stays inside one kind, so §5.4's argument holds unchanged: no set of suggestions moves Spent, Income or Saved. §11's money property test gains suggestions.
-- **Stale suggestions.** `catalogFingerprint(categories)` is a hash of the household's sorted `id:name:kind` triples, computed in `buildCategoryContext`. Adding, renaming or deleting a category changes it, so every older suggestion stops applying at once and its row shows the bank's category until it is re-suggested.
+- **Stale suggestions.** `catalogFingerprint(categories)` is a hash (cyrb53, 53-bit, for change detection only) of the household's sorted `id:name:kind` triples, computed in `buildCategoryContext`. Adding, renaming or deleting a category changes it, so every older suggestion stops applying at once and its row shows the bank's category until it is re-suggested.
 
 ### 14.4 Storage: `db/migrations/022_category_suggestions.sql`
 
@@ -937,13 +939,18 @@ grant select, insert, update, delete on table public.category_suggestions to ser
 
 ### 14.5 Producing suggestions: `lib/category-suggest.ts` (server-only)
 
-`suggestCategories(householdId, { limit = 200 })`:
-1. **Environment.** `assertEnvMatchesDatabase()`. A mismatch logs `[suggest] skipped: environment` and returns, so local and Preview never call TypeSafe or write suggestions.
-2. **Switch.** Returns at once unless suggestions are on (§14.7).
-3. **Read** the household's categories and rules (`fetchCategoryContext`'s data) and its hand picks, and build the examples and the fingerprint.
+`suggestCategories(householdId, { limit = 200, startedAt })`:
+1. **Switch.** Unless suggestions are on (§14.7), returns `{ status: 'off' }` at once, silently, before any read.
+2. **Environment.** `assertEnvMatchesDatabase()`. A mismatch logs `[suggest] skipped: environment` and returns, so local and Preview never call TypeSafe or write suggestions.
+3. **Read** the household's categories and rules with `fetchCategoryDataForHousehold(householdId)`: the service-role client, filtered by household by hand, with the same throws as `fetchCategoryContext`. Read its transactions, hand picks included, and build the examples and the fingerprint.
 4. **Select up to `limit` rows** that §14.2 admits and that have no suggestion or one with a different fingerprint, newest first, through `readAllRows`.
-5. **Ask** in batches of 20, through `lib/typesafe.ts`: a typed wrapper over `POST https://api.typesafe.ai/v1/systemone` with `model: 'jev-latest'`. It uses `fetch`, adds no dependency, reads `TYPESAFE_API_KEY` (already documented and guarded by `check:secrets`), retries 429 and 529 up to three times with backoff, and never logs the request body.
-6. **Write** with the service-role client: upsert per row, `{ count: 'exact' }`, checked.
+5. **Ask** in batches of 20, through `lib/typesafe.ts`: a typed wrapper over `POST https://api.typesafe.ai/v1/systemone` with `model: 'jev-latest'`. It uses `fetch`, adds no dependency, and reads `TYPESAFE_API_KEY` (already documented and guarded by `check:secrets`).
+   - Each attempt times out after 15s.
+   - 429 and 529 are retried up to three times with backoff. Nothing else is retried, network errors and timeouts included.
+   - Errors carry the status only, never TypeSafe's response body, which can echo the request. The module never logs.
+   - A run starts no new batch once 200s have passed since the request began (the route passes `startedAt`, since `after()` shares the route's max duration, which starts with the request), under Vercel's 300s default max duration. It then logs `[suggest] done` with `stoppedAtDeadline: true`, and the rows not reached are picked up by the next sync.
+   - A batch TypeSafe refuses (400, 422) or answers in a way the wrapper rejects is logged as `[suggest] batch failed` with its index, row count and status (never a body), and skipped; its rows stay due and the next batch is asked, so one bad batch cannot block every row behind it. Every other failure (401/403, no key, network or timeout, 429/529 after retries, 5xx, or any database read or write) ends the run as `[suggest] failed`, with the counts so far.
+6. **Write** with the service-role client: one upsert per batch on `transaction_id`, `{ count: 'exact' }`, checked against the rows written. An answer naming a category not in the snapshot skips that row; this is defensive only, since the options and the name-to-id map come from the same snapshot and the wrapper already rejects an option not offered. A category deleted during the run fails the upsert's foreign key and ends the run; the next sync retries.
 
 **When it runs:**
 - **After each sync,** in the sync route and the webhook's sync path, through `after()` from `next/server` (`node_modules/next/dist/docs/01-app/03-api-reference/04-functions/after.md`). It runs once the response is sent, within the route's max duration, so Refresh is not slowed. **Any failure is caught, logged as `[suggest] failed`, and never reaches the sync's response, its status, or the bank's health flag.** `after` also runs when the sync itself failed; that's harmless, because the job only suggests for rows already stored.
@@ -953,8 +960,9 @@ grant select, insert, update, delete on table public.category_suggestions to ser
 ### 14.6 UI
 
 - **Marker.** Where §8.1 shows the learned marker, a row whose `changedBySuggestion` is true shows a distinct `SuggestedIcon` with `title` and `aria-label` "Grocery, suggested by Jev. Pick a category to change it." It links nowhere: a suggestion has no settings of its own.
+- **Phone card.** The transaction card shows the line "Suggested by Jev." on such a row.
 - **Picking overrides it,** and (PR 3) the pick teaches a rule as any pick does.
-- **Settings → Category rules** gains one line under its help text: "For merchants without a rule, Jev suggests a category. {n} transactions are filed by Jev." No other controls.
+- **Settings → Category rules** gains one line under its help text: "For merchants without a rule, Jev suggests a category. {n} transactions are filed by Jev." The line is hidden while the switch is off. No other controls.
 
 ### 14.7 The switch
 
@@ -962,14 +970,14 @@ grant select, insert, update, delete on table public.category_suggestions to ser
 
 ### 14.8 Launch check
 
-Before the switch is turned on, a check run against production through `lib/category-suggest.ts`'s own request builder (throwaway script, read-only on the database) reports to the owner:
+Before the switch is turned on, a check run against production through the job's own request builder, `lib/category-suggest-request.ts` (throwaway script, read-only on the database), reports to the owner:
 - agreement with the household's hand picks, each merchant held out;
 - the unpicked sample, listing every row Jev would change, with confidence;
 - batched against single answers on the same rows;
-- the rows that would change at 0.80, 0.90 and 0.95, so the owner picks the threshold;
+- the rows that would change at 0.80, 0.90 and 0.95 of the Choice answer's `confidence` field, so the owner picks the threshold;
 - tokens per row and latency.
 
-The threshold the owner picks becomes `SUGGESTION_THRESHOLD` in `lib/category-suggest.ts`. Then the switch goes on, and Spent, Income and Saved are compared before and after, as §10.2 step 4 does for rules.
+The threshold the owner picks becomes `SUGGESTION_THRESHOLD` in `lib/category-rules.ts`, which client code can import. It is a provisional 0.9 until then. Then the switch goes on, and Spent, Income and Saved are compared before and after, as §10.2 step 4 does for rules.
 
 ### 14.9 Testing
 
@@ -986,7 +994,7 @@ The threshold the owner picks becomes `SUGGESTION_THRESHOLD` in `lib/category-su
   - a TypeSafe failure writes nothing and throws nothing to the caller.
 - **Sync route:** a rejecting `suggestCategories` leaves the sync's response and the bank's status unchanged.
 - **Pages:** each money surface relabels a Safeway-less Whole Foods row through a seeded suggestion, and ignores it with the switch off.
-- **Invariants:** tripwire 4's `user-category-write` check also covers `lib/category-suggest.ts`; `.from('category_suggestions')` writes appear only there.
+- **Invariants:** tripwire 4's `user-category-write` check also covers `lib/category-suggest.ts`. A `suggestion-write` check in `scripts/check-invariants.mjs` fails on any `.from('category_suggestions')` write outside it.
 
 ### 14.10 Trade-offs
 

@@ -1,4 +1,4 @@
-import { kindOf, resolveCategory } from './category-rules'
+import { kindOf, resolveCategory, type SuggestionRef } from './category-rules'
 import { isCreditCardPayment } from './categories'
 import { spendableAmount } from './reimbursements'
 import type { SpendContext } from './spend-context'
@@ -8,6 +8,7 @@ export type Txn = {
   amount: number
   date: string
   merchant_name: string | null
+  suggestion: SuggestionRef | null
   user_category: string | null
   pfc_primary: string | null
   pfc_detailed: string | null

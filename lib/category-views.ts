@@ -5,6 +5,7 @@ import { isCreditCardPayment } from './categories'
 import {
   buildCategoryContext,
   changedByRule,
+  changedBySuggestion,
   kindOf,
   merchantKey,
   resolveCategory,
@@ -77,13 +78,17 @@ export type RuleCounts = {
 
 // Settings' counts. Per category: how many rows show it, matching its drill-down exactly (so card
 // payments without a pick are skipped, as filterByCategory skips them). Per rule: the counts the
-// Category rules card shows. Takes CategoryData, not a context, because the per-rule counts need
+// Category rules card shows. `suggested`: the rows that card's Jev line counts. Takes CategoryData, not a context, because the per-rule counts need
 // each rule's merchant key and a context deliberately hides its rules.
 export function categoryUsage(
   rows: CategorizableTxn[],
   data: CategoryData,
   budgetNames: Set<string>
-): { categories: Record<string, { txns: number; hasBudget: boolean }>; rules: Record<string, RuleCounts> } {
+): {
+  categories: Record<string, { txns: number; hasBudget: boolean }>
+  rules: Record<string, RuleCounts>
+  suggested: number // rows Jev's suggestion relabels (changedBySuggestion), spec §14.6
+} {
   const ctx = buildCategoryContext(data)
   const categories: Record<string, { txns: number; hasBudget: boolean }> = {}
   for (const c of data.categories) categories[c.name] = { txns: 0, hasBudget: budgetNames.has(c.name) }
@@ -93,11 +98,13 @@ export function categoryUsage(
     rules[r.id] = { changed: 0, pickedByHand: 0, matching: 0 }
     ruleIdByKey.set(r.merchant_key, r.id)
   }
+  let suggested = 0
   for (const t of rows) {
     if (isCreditCardPayment(t)) continue
     const resolved = resolveCategory(t, ctx)
     if (Object.hasOwn(categories, resolved.name)) categories[resolved.name].txns++
     if (resolved.source === 'rule' && changedByRule(resolved)) rules[resolved.ruleId].changed++
+    if (changedBySuggestion(resolved)) suggested++
     const key = merchantKey(t.merchant_name)
     const ruleId = key ? ruleIdByKey.get(key) : undefined
     if (ruleId) {
@@ -105,7 +112,7 @@ export function categoryUsage(
       if (t.user_category) rules[ruleId].pickedByHand++
     }
   }
-  return { categories, rules }
+  return { categories, rules, suggested }
 }
 
 export type DeleteImpact = {
@@ -125,6 +132,7 @@ export function deleteImpact(rows: CategorizableTxn[], data: CategoryData, categ
   const rulesRemoved = data.rules.filter((r) => r.category_id === categoryId).length
   if (!deleted) return { uncategorized: 0, moved: [], movedMore: 0, rulesRemoved, toSpending: 0 }
   const before = buildCategoryContext(data)
+  // Intended: the preview counts what the totals will show until the next sync re-asks Jev (§14.6).
   const after = buildCategoryContext(data, { withoutCategoryId: categoryId })
   const destinations = new Map<string, number>()
   let uncategorized = 0

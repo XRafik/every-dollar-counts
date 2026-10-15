@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/dashboard-page.test.tsx: the static page import
 // below is linked before this file's body runs, firing the mock factory.
-const { results } = vi.hoisted(() => ({
+const { results, switchState } = vi.hoisted(() => ({
   results: {} as Record<string, { data: unknown; error: { message: string } | null }>,
+  switchState: { suggestionsOn: true },
 }))
 
 // A supabase query is a builder awaited at the end, so the stub returns itself for every chained
@@ -43,7 +44,7 @@ vi.mock('@/lib/category-context', async () => {
       if (c.error) throw new Error(`could not read categories: ${c.error.message}`)
       const r = results.category_rules ?? { data: [], error: null }
       if (r.error) throw new Error(`could not read category rules: ${r.error.message}`)
-      return testData(c.data as never, r.data as never)
+      return testData(c.data as never, r.data as never, { suggestionsOn: switchState.suggestionsOn })
     },
     readTransactionsForCounts: async () => {
       const t = results.transactions ?? { data: [], error: null }
@@ -66,6 +67,7 @@ import { CategoryManager } from '@/components/CategoryManager'
 import { CategoryRulesCard } from '@/components/CategoryRulesCard'
 import { BankList } from '@/components/BankList'
 import { txnRows } from '../stubs/postgrest-pages'
+import { catalogFingerprint } from '@/lib/category-rules'
 
 const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
 const GROCERY = { id: 'c-grocery', name: 'Grocery', pfc_primary: null, sort_order: 1 }
@@ -126,6 +128,7 @@ beforeEach(() => {
   results.category_rules = { data: [], error: null }
   results.transactions = { data: [], error: null }
   results.budgets = { data: [], error: null }
+  switchState.suggestionsOn = true
 })
 
 describe('Settings timezone control', () => {
@@ -189,6 +192,34 @@ describe('Settings categories and rules', () => {
       { id: 'c-income', name: 'Income', kind: 'income' },
       { id: 'c-tin', name: 'Transfer In', kind: 'transfer' },
     ])
+  })
+
+  // #28 spec §14.6/§14.7: the Jev line counts the rows Jev relabels, and is hidden with the switch off.
+  describe('Jev line', () => {
+    const suggestedRows = () => {
+      const fp = catalogFingerprint([FOOD, GROCERY])
+      const toGrocery = { category_id: 'c-grocery', confidence: 0.99, catalog_fingerprint: fp }
+      return [
+        { id: 't1', date: '2026-09-10', merchant_name: 'Whole Foods', user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, suggestion: toGrocery },
+        { id: 't2', date: '2026-09-11', merchant_name: 'Trader Joes', user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, suggestion: toGrocery },
+        { id: 't3', date: '2026-09-12', merchant_name: 'Deli', user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, suggestion: null },
+      ]
+    }
+
+    it('passes the count of Jev-filed transactions when suggestions are on', async () => {
+      results.categories = { data: [FOOD, GROCERY], error: null }
+      results.transactions = { data: suggestedRows(), error: null }
+      const props = findProps(await SettingsPage(), CategoryRulesCard) as { suggestedCount: unknown }
+      expect(props.suggestedCount).toBe(2)
+    })
+
+    it('passes null when suggestions are off', async () => {
+      switchState.suggestionsOn = false
+      results.categories = { data: [FOOD, GROCERY], error: null }
+      results.transactions = { data: suggestedRows(), error: null }
+      const props = findProps(await SettingsPage(), CategoryRulesCard) as { suggestedCount: unknown }
+      expect(props.suggestedCount).toBeNull()
+    })
   })
 
   // Settings is the only place a bank can be reconnected (spec §7.3), so a failed categories,

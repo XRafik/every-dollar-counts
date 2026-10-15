@@ -26,7 +26,16 @@ const ORIGIN: Record<CategoryRule['origin'], string> = {
 // Settings → Category rules (#28 spec §8.3): every rule, with what it does, a Change of category
 // within its kind, and Remove. Rules are created by a first pick on a transaction (spec §6.1 step 8)
 // and by the one-time seed, never here.
-export function CategoryRulesCard({ rules, categories }: { rules: RuleView[]; categories: RuleCategory[] }) {
+// `suggestedCount` is null while suggestions are off (spec §14.7), which hides the Jev line.
+export function CategoryRulesCard({
+  rules,
+  categories,
+  suggestedCount,
+}: {
+  rules: RuleView[]
+  categories: RuleCategory[]
+  suggestedCount: number | null
+}) {
   const sorted = [...rules].sort((a, b) => a.merchantLabel.localeCompare(b.merchantLabel, undefined, { sensitivity: 'base' }))
   return (
     <div className="space-y-3">
@@ -35,6 +44,14 @@ export function CategoryRulesCard({ rules, categories }: { rules: RuleView[]; ca
         transactions the same way, past and future. It never moves money between spending, transfers and income, and
         never touches card payments.
       </p>
+      {/* #28 spec §14.6: one line, no controls. Picking a category on a row overrides Jev. */}
+      {suggestedCount !== null && (
+        <p className="text-sm text-muted">
+          {`For merchants without a rule, Jev suggests a category. ${
+            suggestedCount === 1 ? '1 transaction is' : `${suggestedCount} transactions are`
+          } filed by Jev.`}
+        </p>
+      )}
       {sorted.length === 0 ? (
         <p className="text-sm text-muted">
           Nothing learned yet. Pick a category on a transaction and the app will remember it for that merchant.

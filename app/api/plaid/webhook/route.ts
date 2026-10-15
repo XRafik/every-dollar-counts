@@ -1,10 +1,11 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { decrypt } from '@/lib/crypto'
 import { plaidEnv } from '@/lib/plaid'
 import { plaidLogSafe } from '@/lib/plaid-errors'
 import { storeAccounts, syncAndStore } from '@/lib/ingest'
 import { shouldSyncTransactions } from '@/lib/sync-policy'
+import { suggestCategories } from '@/lib/category-suggest'
 
 // Plaid calls this — there is no user session. Two jobs:
 //  - ITEM webhooks that mean "the login is broken or about to break"  -> mark the item
@@ -36,6 +37,9 @@ const DATA_READY = new Set([
 ])
 
 export async function POST(req: Request) {
+  // after() shares this route's max duration, which starts now: the suggestion job's deadline
+  // counts from here (lib/category-suggest.ts RUN_DEADLINE_MS).
+  const startedAt = Date.now()
   // Shared secret on the URL registered with Plaid. This is a pragmatic guard, not Plaid's full
   // JWT verification (/webhook_verification_key/get + ES256). What it buys and doesn't: it stops
   // anonymous internet noise, but a leaked URL is a leaked credential. The blast radius is small —
@@ -87,6 +91,10 @@ export async function POST(req: Request) {
       // the backstop.
       console.error('[plaid] webhook sync failed', item.id, plaidLogSafe(e))
     }
+    // Jev suggestions (#28 spec §14.5), as the Refresh route does, once Plaid has its answer. The
+    // Refresh route may schedule a run for the same rows; that costs tokens only.
+    const household_id = item.household_id
+    after(() => suggestCategories(household_id, { startedAt }).catch((e) => console.error('[suggest] failed', household_id, e instanceof Error ? e.message : String(e))))
   }
 
   return NextResponse.json({ ok: true })

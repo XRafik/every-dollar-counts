@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { SearchIcon } from '@/components/ui/icons'
 import { inputClass } from '@/components/ui/styles'
-import { fetchCategoryContext } from '@/lib/category-context'
+import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/category-context'
 import { resolveCategory } from '@/lib/category-rules'
 import { filterByCategory, filterByFlow } from '@/lib/category-views'
 import { buildSpendContext } from '@/lib/spend-context'
@@ -82,7 +82,7 @@ export default async function TransactionsPage({
   let query = supabase
     .from('transactions')
     .select(
-      'id, name, merchant_name, amount, date, user_category, pfc_primary, pfc_detailed, account_id, reimbursable_amount, reimbursable_note',
+      `id, name, merchant_name, amount, date, user_category, pfc_primary, pfc_detailed, account_id, reimbursable_amount, reimbursable_note, ${SUGGESTION_EMBED}`,
       { count: 'exact' }
     )
     .eq('removed', false)
@@ -101,7 +101,7 @@ export default async function TransactionsPage({
   // The fifth money surface (design spec §6/§7): the same SpendContext the other four build, built
   // from this page's own fetched rows — reimbursable now lives on the transaction, so there is no
   // second query to keep in sync with this page's own filters/pagination.
-  const rows = txns ?? []
+  const rows = withSuggestion(txns ?? [])
   const ctx = buildSpendContext({ data, txns: rows })
 
   // Category and flow are on the transaction's EFFECTIVE category (computed), so filter in memory.

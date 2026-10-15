@@ -10,7 +10,7 @@ import { StatCard } from '@/components/ui/StatCard'
 import { StatRows } from '@/components/ui/StatRows'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { money, moneyWhole, longDate, monthNameLong } from '@/lib/format'
-import { fetchCategoryContext } from '@/lib/category-context'
+import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/category-context'
 import { activityItem } from '@/lib/category-views'
 import {
   netWorth,
@@ -117,7 +117,7 @@ export default async function DashboardPage({
   const { data: flowTxns, error: flowError } = await readAllRows(() =>
     supabase
       .from('transactions')
-      .select('id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount')
+      .select(`id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount, ${SUGGESTION_EMBED}`)
       .eq('removed', false)
       .gte('date', windowStart)
   )
@@ -132,7 +132,7 @@ export default async function DashboardPage({
 
   // The reimbursable map is built straight from this page's own transaction rows — see
   // buildSpendContext.
-  const allRows = flowTxns ?? []
+  const allRows = withSuggestion(flowTxns ?? [])
   const ctx = buildSpendContext({ data, txns: allRows })
 
   const flows = monthlyFlows(allRows, ctx, months)
@@ -163,14 +163,14 @@ export default async function DashboardPage({
 
   const { data: recentTxns, error: recentError } = await supabase
     .from('transactions')
-    .select('id, name, merchant_name, amount, date, user_category, pfc_primary, pfc_detailed, reimbursable_amount')
+    .select(`id, name, merchant_name, amount, date, user_category, pfc_primary, pfc_detailed, reimbursable_amount, ${SUGGESTION_EMBED}`)
     .eq('removed', false)
     .order('date', { ascending: false })
     .order('id', { ascending: false })  // #50: `date` is day-granular and ties constantly; without a unique second key Postgres may return tied rows in any order, so an UPDATE reshuffles the list under the reader.
     .limit(6)
   // Otherwise a failed read renders "No transactions yet" to a household with 696 of them.
   if (recentError) throw new Error(`could not read recent transactions: ${recentError.message}`)
-  const recentItems = (recentTxns ?? []).map((t) => activityItem(t, ctx))
+  const recentItems = withSuggestion(recentTxns ?? []).map((t) => activityItem(t, ctx))
 
   const worth = netWorth(accounts, owedToYou) + sumManualAssets(manualAssets)
   const cash = cashOnHand(accounts)

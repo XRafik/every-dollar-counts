@@ -104,11 +104,11 @@ describe('monthlyFlows', () => {
   ]
 
   const txns: FlowTxn[] = [
-    { id: 'f1', amount: 50, date: '2026-07-03', merchant_name: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null },
-    { id: 'f2', amount: -2000, date: '2026-07-05', merchant_name: null, user_category: null, pfc_primary: 'INCOME', pfc_detailed: null },
-    { id: 'f3', amount: -500, date: '2026-07-06', merchant_name: null, user_category: null, pfc_primary: 'TRANSFER_IN', pfc_detailed: null },
-    { id: 'f4', amount: 30, date: '2026-06-11', merchant_name: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null },
-    { id: 'f5', amount: 999, date: '2026-05-01', merchant_name: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null }, // out of range
+    { id: 'f1', amount: 50, date: '2026-07-03', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null },
+    { id: 'f2', amount: -2000, date: '2026-07-05', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'INCOME', pfc_detailed: null },
+    { id: 'f3', amount: -500, date: '2026-07-06', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'TRANSFER_IN', pfc_detailed: null },
+    { id: 'f4', amount: 30, date: '2026-06-11', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null },
+    { id: 'f5', amount: 999, date: '2026-05-01', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null }, // out of range
   ]
 
   it('counts paychecks as income but excludes transfers, and excludes both from spending', () => {
@@ -121,7 +121,7 @@ describe('monthlyFlows', () => {
 
   it('respects user_category overrides', () => {
     const overridden: FlowTxn[] = [
-      { id: 'f6', amount: 40, date: '2026-07-02', merchant_name: null, user_category: 'Income', pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null },
+      { id: 'f6', amount: 40, date: '2026-07-02', merchant_name: null, suggestion: null, user_category: 'Income', pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null },
     ]
     const flows = monthlyFlows(overridden, ctx(), months)
     // amount > 0 but category is 'Income' (excluded from spending) -> not counted
@@ -138,7 +138,7 @@ describe('monthlyFlows', () => {
         id: 'cc1',
         amount: 900,
         date: '2026-07-10',
-        merchant_name: null,
+        merchant_name: null, suggestion: null,
         user_category: null,
         pfc_primary: 'LOAN_PAYMENTS',
         pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT',
@@ -148,7 +148,7 @@ describe('monthlyFlows', () => {
         id: 'cc2',
         amount: -900,
         date: '2026-07-10',
-        merchant_name: null,
+        merchant_name: null, suggestion: null,
         user_category: null,
         pfc_primary: 'LOAN_PAYMENTS',
         pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT',
@@ -165,7 +165,7 @@ describe('monthlyFlows', () => {
         id: 'mort1',
         amount: 1500,
         date: '2026-07-10',
-        merchant_name: null,
+        merchant_name: null, suggestion: null,
         user_category: null,
         pfc_primary: 'LOAN_PAYMENTS',
         pfc_detailed: 'LOAN_PAYMENTS_MORTGAGE_PAYMENT',
@@ -180,8 +180,8 @@ describe('monthlyFlows', () => {
   // vanish. A genuine paycheck (inflow in the Income category) still counts as income.
   it('nets a refund against its spending category instead of counting it as income', () => {
     const withRefund: FlowTxn[] = [
-      { id: 'r1', amount: 800, date: '2026-07-04', merchant_name: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null },
-      { id: 'r2', amount: -500, date: '2026-07-20', merchant_name: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null }, // refund
+      { id: 'r1', amount: 800, date: '2026-07-04', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null },
+      { id: 'r2', amount: -500, date: '2026-07-20', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'TRAVEL', pfc_detailed: null }, // refund
     ]
     const flows = monthlyFlows(withRefund, ctx(), months)
     // net Travel spend = 800 - 500 = 300; income unaffected
@@ -190,7 +190,7 @@ describe('monthlyFlows', () => {
 
   it('still counts a genuine paycheck (inflow in an income category) as income', () => {
     const paycheck: FlowTxn[] = [
-      { id: 'p1', amount: -2000, date: '2026-07-05', merchant_name: null, user_category: null, pfc_primary: 'INCOME', pfc_detailed: null },
+      { id: 'p1', amount: -2000, date: '2026-07-05', merchant_name: null, suggestion: null, user_category: null, pfc_primary: 'INCOME', pfc_detailed: null },
     ]
     const flows = monthlyFlows(paycheck, ctx(), months)
     expect(flows.find((f) => f.key === '2026-07')).toMatchObject({ spending: 0, income: 2000 })
@@ -203,7 +203,7 @@ describe('monthlyFlows', () => {
         id: 'o1',
         amount: 900,
         date: '2026-07-10',
-        merchant_name: null,
+        merchant_name: null, suggestion: null,
         user_category: 'Food & Drink',
         pfc_primary: 'LOAN_PAYMENTS',
         pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT',
@@ -220,7 +220,7 @@ describe('monthlyFlows', () => {
           id: 'rental',
           amount: 1000,
           date: '2026-07-04',
-          merchant_name: null,
+          merchant_name: null, suggestion: null,
           user_category: null,
           pfc_primary: 'TRAVEL',
           pfc_detailed: null,
@@ -245,7 +245,7 @@ describe('monthlyFlows', () => {
           id: 'flight',
           amount: 500,
           date: '2026-06-04',
-          merchant_name: null,
+          merchant_name: null, suggestion: null,
           user_category: null,
           pfc_primary: 'TRAVEL',
           pfc_detailed: null,
@@ -254,7 +254,7 @@ describe('monthlyFlows', () => {
           id: 'repay',
           amount: -500,
           date: '2026-07-03',
-          merchant_name: null,
+          merchant_name: null, suggestion: null,
           user_category: null,
           pfc_primary: 'INCOME',
           pfc_detailed: null,
@@ -277,7 +277,7 @@ describe('monthlyFlows', () => {
           id: 'flight',
           amount: 500,
           date: '2026-06-04',
-          merchant_name: null,
+          merchant_name: null, suggestion: null,
           user_category: null,
           pfc_primary: 'TRAVEL',
           pfc_detailed: null,
@@ -286,7 +286,7 @@ describe('monthlyFlows', () => {
           id: 'repay',
           amount: -500,
           date: '2026-07-03',
-          merchant_name: null,
+          merchant_name: null, suggestion: null,
           user_category: null,
           pfc_primary: 'INCOME',
           pfc_detailed: null,
