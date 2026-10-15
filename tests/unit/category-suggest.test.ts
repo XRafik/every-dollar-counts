@@ -67,7 +67,7 @@ vi.mock('@/lib/category-context', async (importOriginal) => ({
   suggestionsEnabled,
 }))
 
-import { suggestCategories } from '@/lib/category-suggest'
+import { RUN_DEADLINE_MS, suggestCategories } from '@/lib/category-suggest'
 import { EnvMismatchError } from '@/lib/app-env'
 import { TypeSafeError } from '@/lib/typesafe'
 import { SUGGESTION_EMBED } from '@/lib/category-context'
@@ -103,21 +103,32 @@ function seed(rows: Txn[], opts: Parameters<typeof pagedTable>[1] = {}) {
   db.txnQuery = table.query
 }
 
-// Jev answers every question with `choice` (Grocery by default) unless `by` names another.
+// Questions are keyed by batch position (t0, t1, …), never by transaction id. The tests recover
+// each position's transaction id from its description, which txn() builds from the id.
+const idAt = (req: Req, key: string) =>
+  (req.state.transactions[Number(key.slice(1))] as { bank_description: string }).bank_description.replace(
+    'SECRET DESCRIPTION ',
+    ''
+  )
+
+// Jev answers every question with `choice` (Grocery by default) unless `by` names another, by
+// transaction id.
 function answering(by: Record<string, string> = {}, choice = 'Grocery') {
   askChoices.mockImplementation(async (req: Req) => ({
     model: 'jev-test',
     answers: Object.fromEntries(
-      Object.keys(req.questions).map((id) => [
-        id,
-        { type: 'choice', choice: by[id] ?? choice, probabilities: {}, confidence: 0.93 },
+      Object.keys(req.questions).map((key) => [
+        key,
+        { type: 'choice', choice: by[idAt(req, key)] ?? choice, probabilities: {}, confidence: 0.93 },
       ])
     ),
     usage: { input_tokens: 100, output_tokens: 5 },
   }))
 }
 
-const asked = () => askChoices.mock.calls.map(([req]) => Object.keys((req as Req).questions))
+// The transaction ids each call asked about, in question order.
+const asked = () =>
+  askChoices.mock.calls.map(([req]) => Object.keys((req as Req).questions).map((key) => idAt(req as Req, key)))
 const logs = (spy: ReturnType<typeof vi.spyOn>) => JSON.stringify(spy.mock.calls)
 
 let errSpy: ReturnType<typeof vi.spyOn>
@@ -252,9 +263,10 @@ describe('suggestCategories: the read and the rows asked about', () => {
       { merchant: 'Safeway', filed_as: 'Grocery' },
       { merchant: 'Giant', filed_as: 'Grocery' },
     ])
-    expect(Object.keys(req.questions)).toEqual(['plain'])
-    expect(req.questions.plain.criteria).toHaveProperty('none')
-    expect(req.questions.plain.criteria).not.toHaveProperty('Transfer Out')
+    expect(Object.keys(req.questions)).toEqual(['t0'])
+    expect(asked()).toEqual([['plain']])
+    expect(req.questions.t0.criteria).toHaveProperty('none')
+    expect(req.questions.t0.criteria).not.toHaveProperty('Transfer Out')
   })
 })
 
@@ -283,11 +295,66 @@ describe('suggestCategories: writes', () => {
     expect(out).toEqual({ status: 'done', asked: 2, written: 1, inputTokens: 100 })
   })
 
+  it('maps answers back by position: a reordered answer object still lands on the right rows', async () => {
+    seed([txn('a', { date: '2026-10-02' }), txn('b')])
+    askChoices.mockImplementation(async () => ({
+      model: 'jev-test',
+      answers: {
+        t1: { type: 'choice', choice: 'none', probabilities: {}, confidence: 0.5 },
+        t0: { type: 'choice', choice: 'Grocery', probabilities: {}, confidence: 0.97 },
+      },
+      usage: { input_tokens: 100, output_tokens: 5 },
+    }))
+    await suggestCategories(HH)
+    expect(db.upserts[0].payload.map((r) => [r.transaction_id, r.category_id, r.confidence])).toEqual([
+      ['a', GROCERY.id, 0.97],
+      ['b', null, 0.5],
+    ])
+  })
+
   it('makes no write for a batch whose every answer is unknown, and carries on', async () => {
     seed([txn('a')])
     answering({}, 'Not A Category')
     await expect(suggestCategories(HH)).resolves.toEqual({ status: 'done', asked: 1, written: 0, inputTokens: 100 })
     expect(db.upserts).toEqual([])
+  })
+})
+
+describe('suggestCategories: the run deadline', () => {
+  it('starts no batch after 200s: one call, done, logged with stoppedAtDeadline', async () => {
+    expect(RUN_DEADLINE_MS).toBe(200_000)
+    seed(Array.from({ length: 45 }, (_, i) => txn(`t${String(i).padStart(2, '0')}`)))
+    let clock = 0
+    answering()
+    const answer = askChoices.getMockImplementation()!
+    askChoices.mockImplementation(async (req: Req) => {
+      clock += RUN_DEADLINE_MS // the first batch takes the whole budget
+      return answer(req)
+    })
+    const out = await suggestCategories(HH, { now: () => clock })
+    expect(askChoices).toHaveBeenCalledTimes(1)
+    expect(out).toEqual({ status: 'done', asked: 20, written: 20, inputTokens: 100 })
+    expect(logSpy).toHaveBeenCalledWith('[suggest] done', {
+      householdId: HH,
+      asked: 20,
+      written: 20,
+      inputTokens: 100,
+      stoppedAtDeadline: true,
+    })
+  })
+
+  it('just under the deadline still starts the next batch', async () => {
+    seed(Array.from({ length: 25 }, (_, i) => txn(`t${String(i).padStart(2, '0')}`)))
+    let clock = 0
+    answering()
+    const answer = askChoices.getMockImplementation()!
+    askChoices.mockImplementation(async (req: Req) => {
+      clock += RUN_DEADLINE_MS - 1
+      return answer(req)
+    })
+    const out = await suggestCategories(HH, { now: () => clock })
+    expect(askChoices).toHaveBeenCalledTimes(2)
+    expect(out).toEqual({ status: 'done', asked: 25, written: 25, inputTokens: 200 })
   })
 })
 

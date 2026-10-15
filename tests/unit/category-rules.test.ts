@@ -365,6 +365,16 @@ describe('resolveCategory step 5: suggestions', () => {
       const noTransferOut = buildKindContext(DEFAULTS.filter((c) => c.name !== 'Transfer Out'))
       expect(suggestableRow(wholeFoods(null, { pfc_primary: 'TRANSFER_OUT', pfc_detailed: null }), noTransferOut)).toBe(false)
     })
+    it('refuses an unmapped spending row whose shown name counts as income (the second kind measure)', () => {
+      // Plaid's kind for LOAN_DISBURSEMENTS (no default maps it) is spending, but the row shows as
+      // Uncategorized, and here a household category of that name counts as income.
+      const k2 = buildKindContext([...DEFAULTS, cat('Uncategorized', 'INCOME', 200)])
+      expect(kindOf('Uncategorized', k2)).toBe('income')
+      const t = wholeFoods(null, { pfc_primary: 'LOAN_DISBURSEMENTS', pfc_detailed: null })
+      expect(suggestableRow(t, k2)).toBe(false)
+      // Same row without that category: both measures say spending, so it is asked about.
+      expect(suggestableRow(t, k)).toBe(true)
+    })
   })
 
   it('spendingCategories excludes income and transfer categories', () => {

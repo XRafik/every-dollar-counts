@@ -4,8 +4,8 @@
 //
 // Nothing here may add a field to what leaves the app. The request carries only the household's
 // spending category names, its examples and, per row, the six fields buildBatchRequest lists: no
-// account numbers, balances, institution names or household identifiers. Transaction ids are the
-// question keys, which TypeSafe never sends to the model.
+// account numbers, balances, institution names or household identifiers. Questions are keyed by
+// batch position (`t0`..`t19`, questionKey), so no transaction id leaves the app either.
 import { isCardPaymentRow } from './categories'
 import { buildKindContext, kindOf, merchantKey, spendingCategories, type CategoryData } from './category-rules'
 
@@ -89,8 +89,13 @@ export function householdExamples(data: CategoryData, picks: PickRow[]): Example
   return out.slice(0, MAX_EXAMPLES)
 }
 
-// One request for up to BATCH_SIZE rows: the examples once, then one Choice per row keyed by the
-// row's id. Plaid's sign convention is positive = money out, so only a positive amount is 'out'.
+// The question key for the row at batch position `i`. The job maps answers back by position, so a
+// transaction id never has to leave the app.
+export const questionKey = (i: number): string => `t${i}`
+
+// One request for up to BATCH_SIZE rows: the examples once, then one Choice per row keyed by its
+// position (questionKey). Plaid's sign convention is positive = money out, so only a positive
+// amount is 'out'.
 export function buildBatchRequest(
   rows: SuggestRow[],
   options: Record<string, string | null>,
@@ -100,6 +105,7 @@ export function buildBatchRequest(
   questions: Record<string, ChoiceQuestion>
 } {
   if (rows.length > BATCH_SIZE) throw new Error(`a batch holds at most ${BATCH_SIZE} rows, got ${rows.length}`)
+  // A repeated row would be asked twice and upserted twice in one statement, which Postgres refuses.
   if (new Set(rows.map((r) => r.id)).size !== rows.length) throw new Error('a batch repeats a transaction id')
 
   const transactions = rows.map(
@@ -113,8 +119,8 @@ export function buildBatchRequest(
     })
   )
   const questions: Record<string, ChoiceQuestion> = {}
-  rows.forEach((r, i) => {
-    questions[r.id] = {
+  rows.forEach((_, i) => {
+    questions[questionKey(i)] = {
       type: 'choice',
       instructions:
         `Which of this household's budget categories should \`transactions[${i}]\` be filed under? ` +

@@ -5,6 +5,7 @@ import {
   NONE,
   buildBatchRequest,
   householdExamples,
+  questionKey,
   suggestionOptions,
   type PickRow,
   type SuggestRow,
@@ -108,22 +109,30 @@ describe('buildBatchRequest', () => {
     const ex = [{ merchant: 'Giant', filed_as: 'Grocery' }]
     expect(buildBatchRequest([row()], opts, ex).state.household_examples).toEqual(ex)
   })
-  it('asks one choice per row keyed by id, naming its index', () => {
-    const req = buildBatchRequest([row(), row({ id: 't2' })], opts, [])
-    expect(Object.keys(req.questions)).toEqual(['t1', 't2'])
-    expect(req.questions.t2).toEqual({
+  it('asks one choice per row keyed by its position, naming its index', () => {
+    const req = buildBatchRequest([row({ id: 'row-a' }), row({ id: 'row-b' })], opts, [])
+    expect(Object.keys(req.questions)).toEqual([questionKey(0), questionKey(1)])
+    expect(Object.keys(req.questions)).toEqual(['t0', 't1'])
+    expect(req.questions.t1).toEqual({
       type: 'choice',
       criteria: opts,
       instructions:
         "Which of this household's budget categories should `transactions[1]` be filed under? `household_examples` shows how this household files merchants it has decided; follow its habits.",
     })
   })
+  it('sends no transaction id anywhere in the request (spec §14.2)', () => {
+    const ids = Array.from({ length: BATCH_SIZE }, (_, i) => `0c6f1d2e-4b7a-4c1e-9f3a-${String(i).padStart(12, '0')}`)
+    const req = buildBatchRequest(ids.map((id) => row({ id })), opts, [{ merchant: 'Giant', filed_as: 'Grocery' }])
+    const sent = JSON.stringify(req)
+    for (const id of ids) expect(sent).not.toContain(id)
+    expect(sent).not.toContain('0c6f1d2e')
+  })
   it('refuses more than BATCH_SIZE rows', () => {
     expect(BATCH_SIZE).toBe(20)
     expect(() => buildBatchRequest(Array.from({ length: 20 }, (_, i) => row({ id: `t${i}` })), opts, [])).not.toThrow()
     expect(() => buildBatchRequest(Array.from({ length: 21 }, (_, i) => row({ id: `t${i}` })), opts, [])).toThrow()
   })
-  it('refuses duplicate ids, which would silently merge two questions', () => {
+  it('refuses duplicate ids, which would upsert one row twice in a statement', () => {
     expect(() => buildBatchRequest([row(), row()], opts, [])).toThrow()
   })
 })

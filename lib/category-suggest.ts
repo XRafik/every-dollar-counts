@@ -15,6 +15,7 @@ import {
   NONE,
   buildBatchRequest,
   householdExamples,
+  questionKey,
   suggestionOptions,
   type PickRow,
 } from './category-suggest-request'
@@ -36,10 +37,16 @@ export type SuggestOutcome =
 
 type ReadRow = PickRow & { user_category: string | null; suggestion: SuggestionRef | null }
 
+// No new batch starts after this long. The job runs in the route's after(), which shares the
+// route's max duration (Vercel's default is 300s); a run killed by the platform would leave no log
+// line. Rows not reached are still due, so the next sync picks them up.
+export const RUN_DEADLINE_MS = 200_000
+
 export async function suggestCategories(
   householdId: string,
-  { limit = 200 }: { limit?: number } = {}
+  { limit = 200, now = Date.now }: { limit?: number; now?: () => number } = {}
 ): Promise<SuggestOutcome> {
+  const startedAt = now()
   let asked = 0
   let written = 0
   let inputTokens = 0
@@ -80,14 +87,20 @@ export async function suggestCategories(
       .slice(0, limit)
 
     const idByName = new Map(data.categories.map((c) => [c.name, c.id]))
+    let stoppedAtDeadline = false
     for (let i = 0; i < due.length; i += BATCH_SIZE) {
+      if (now() - startedAt >= RUN_DEADLINE_MS) {
+        stoppedAtDeadline = true
+        break
+      }
       const batch = due.slice(i, i + BATCH_SIZE)
       const res = await askChoices(buildBatchRequest(batch, options, examples))
       asked += batch.length
       inputTokens += res.usage.input_tokens
-      const now = new Date().toISOString()
-      const toWrite = batch.flatMap((t) => {
-        const a = res.answers[t.id]
+      const writtenAt = new Date().toISOString()
+      // Answers are keyed by batch position, never by transaction id (spec §14.2).
+      const toWrite = batch.flatMap((t, j) => {
+        const a = res.answers[questionKey(j)]
         if (!a) return []
         const category_id = a.choice === NONE ? null : idByName.get(a.choice)
         // Not an option we offered (askChoices checks this too, but a category could be renamed
@@ -101,7 +114,7 @@ export async function suggestCategories(
             confidence: a.confidence,
             catalog_fingerprint: fingerprint,
             model: res.model,
-            created_at: now,
+            created_at: writtenAt,
           },
         ]
       })
@@ -114,7 +127,12 @@ export async function suggestCategories(
       written += toWrite.length
     }
 
-    console.log('[suggest] done', { householdId, asked, written, inputTokens })
+    console.log(
+      '[suggest] done',
+      stoppedAtDeadline
+        ? { householdId, asked, written, inputTokens, stoppedAtDeadline: true }
+        : { householdId, asked, written, inputTokens }
+    )
     return { status: 'done', asked, written, inputTokens }
   } catch (e) {
     console.error('[suggest] failed', householdId, e instanceof Error ? e.message : String(e))
