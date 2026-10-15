@@ -2,11 +2,26 @@
 // lib/typesafe.ts is server-only; the node environment gives it the real fetch/Response/AbortSignal.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { askChoices, TypeSafeError } from '@/lib/typesafe'
-import type { ChoiceQuestion } from '@/lib/category-suggest-request'
+import type { BatchRequest, ChoiceQuestion } from '@/lib/category-suggest-request'
 
 const criteria = { Grocery: null, 'Food & Drink': "Plaid's default for FOOD_AND_DRINK", none: 'None fits.' }
 const q = (): ChoiceQuestion => ({ type: 'choice', instructions: 'Which?', criteria })
-const req = { state: { transactions: [{ merchant: 'SECRET-MERCHANT' }] }, questions: { t1: q(), t2: q() } }
+const req: BatchRequest = {
+  state: {
+    household_examples: [],
+    transactions: [
+      {
+        merchant: 'SECRET-MERCHANT',
+        bank_description: null,
+        amount_usd: 1,
+        direction: 'out',
+        date: '2026-10-01',
+        bank_category: 'UNKNOWN',
+      },
+    ],
+  },
+  questions: { t1: q(), t2: q() },
+}
 
 const answer = (choice = 'Grocery', confidence = 0.93) => ({
   type: 'choice',
@@ -133,8 +148,12 @@ describe('askChoices: validation', () => {
     expect(e.message).toBe('unreadable response')
     expect(e.status).toBe(200)
   })
-  it('throws when an answer is missing for a question', async () => {
-    await rejection(run(okBody({ answers: { t1: answer() } })))
+  // 'invalid', not the HTTP status: the job tells a per-batch failure (this, 400, 422) from one
+  // that would hit every batch, and a 200 alone cannot say which.
+  it('throws when an answer is missing for a question, with status invalid', async () => {
+    const e = await rejection(run(okBody({ answers: { t1: answer() } })))
+    expect(e.status).toBe('invalid')
+    expect(e.message).toBe('invalid response: no answer for question t2')
   })
   it('throws when a choice is not one of the criteria keys', async () => {
     await rejection(run(okBody({ answers: { t1: answer('Groceries'), t2: answer() } })))
@@ -178,3 +197,11 @@ describe('askChoices: logging', () => {
     expect(spies.every((s) => s.mock.calls.length === 0)).toBe(true)
   })
 })
+
+// askChoices takes only buildBatchRequest's shape, so nothing else can be sent to TypeSafe. Never
+// called; `npx tsc --noEmit` is the test.
+function _arbitraryState() {
+  // @ts-expect-error state must be a BatchRequest's state, not an arbitrary object
+  return askChoices({ state: { account_number: '1234' }, questions: {} })
+}
+void _arbitraryState

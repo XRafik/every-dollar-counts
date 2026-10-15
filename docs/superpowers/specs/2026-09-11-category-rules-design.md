@@ -939,7 +939,7 @@ grant select, insert, update, delete on table public.category_suggestions to ser
 
 ### 14.5 Producing suggestions: `lib/category-suggest.ts` (server-only)
 
-`suggestCategories(householdId, { limit = 200 })`:
+`suggestCategories(householdId, { limit = 200, startedAt })`:
 1. **Switch.** Unless suggestions are on (§14.7), returns `{ status: 'off' }` at once, silently, before any read.
 2. **Environment.** `assertEnvMatchesDatabase()`. A mismatch logs `[suggest] skipped: environment` and returns, so local and Preview never call TypeSafe or write suggestions.
 3. **Read** the household's categories and rules with `fetchCategoryDataForHousehold(householdId)`: the service-role client, filtered by household by hand, with the same throws as `fetchCategoryContext`. Read its transactions, hand picks included, and build the examples and the fingerprint.
@@ -948,8 +948,9 @@ grant select, insert, update, delete on table public.category_suggestions to ser
    - Each attempt times out after 15s.
    - 429 and 529 are retried up to three times with backoff. Nothing else is retried, network errors and timeouts included.
    - Errors carry the status only, never TypeSafe's response body, which can echo the request. The module never logs.
-   - A run starts no new batch once 200s have passed, under Vercel's 300s default max duration. It then logs `[suggest] done` with `stoppedAtDeadline: true`, and the rows not reached are picked up by the next sync.
-6. **Write** with the service-role client: one upsert per batch on `transaction_id`, `{ count: 'exact' }`, checked against the rows written. An answer naming a category that is no longer there skips that row.
+   - A run starts no new batch once 200s have passed since the request began (the route passes `startedAt`, since `after()` shares the route's max duration, which starts with the request), under Vercel's 300s default max duration. It then logs `[suggest] done` with `stoppedAtDeadline: true`, and the rows not reached are picked up by the next sync.
+   - A batch TypeSafe refuses (400, 422) or answers in a way the wrapper rejects is logged as `[suggest] batch failed` with its index, row count and status (never a body), and skipped; its rows stay due and the next batch is asked, so one bad batch cannot block every row behind it. Every other failure (401/403, no key, network or timeout, 429/529 after retries, 5xx, or any database read or write) ends the run as `[suggest] failed`, with the counts so far.
+6. **Write** with the service-role client: one upsert per batch on `transaction_id`, `{ count: 'exact' }`, checked against the rows written. An answer naming a category not in the snapshot skips that row; this is defensive only, since the options and the name-to-id map come from the same snapshot and the wrapper already rejects an option not offered. A category deleted during the run fails the upsert's foreign key and ends the run; the next sync retries.
 
 **When it runs:**
 - **After each sync,** in the sync route and the webhook's sync path, through `after()` from `next/server` (`node_modules/next/dist/docs/01-app/03-api-reference/04-functions/after.md`). It runs once the response is sent, within the route's max duration, so Refresh is not slowed. **Any failure is caught, logged as `[suggest] failed`, and never reaches the sync's response, its status, or the bank's health flag.** `after` also runs when the sync itself failed; that's harmless, because the job only suggests for rows already stored.

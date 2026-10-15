@@ -70,6 +70,10 @@ export type CategoryData = {
   readonly [DATA_BRAND]: true
 }
 
+// CategoryData without its brand. Every literal that is branded `as CategoryData` first
+// `satisfies` this, so a dropped or misspelled field (suggestionsOn) fails tsc despite the cast.
+export type CategoryDataFields = Omit<CategoryData, typeof DATA_BRAND>
+
 type KindState = {
   pfcMap: Record<string, string> // Plaid primary -> category name (last wins, as pfcToName)
   transfers: Set<string> // the exact sets the totals branch on
@@ -217,9 +221,9 @@ export function resolveCategory(t: CategorizableTxn, ctx: CategoryContext): Reso
 }
 
 // resolveCategory's kind gate for a rule (step 3) and a suggestion (step 4), shared with
-// learnableRule and suggestableRow so they cannot drift: a category naming `name` applies only
-// when that name's kind equals both Plaid's kind for the row and the kind of the name the row
-// otherwise shows.
+// learnableRule so they cannot drift. suggestableRow applies the same two measures to 'spending'
+// itself; keep them in step. A category naming `name` applies only when that name's kind equals
+// both Plaid's kind for the row and the kind of the name the row otherwise shows.
 function ruleFits(name: string, bank: { name: string; kind: Kind }, k: KindContext): boolean {
   const kind = kindOf(name, k)
   return kind === bank.kind && kind === kindOf(bank.name, k)

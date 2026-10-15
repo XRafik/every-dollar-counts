@@ -132,6 +132,7 @@ export function deleteImpact(rows: CategorizableTxn[], data: CategoryData, categ
   const rulesRemoved = data.rules.filter((r) => r.category_id === categoryId).length
   if (!deleted) return { uncategorized: 0, moved: [], movedMore: 0, rulesRemoved, toSpending: 0 }
   const before = buildCategoryContext(data)
+  // Intended: the preview counts what the totals will show until the next sync re-asks Jev (§14.6).
   const after = buildCategoryContext(data, { withoutCategoryId: categoryId })
   const destinations = new Map<string, number>()
   let uncategorized = 0

@@ -87,7 +87,25 @@ describe('POST /api/plaid/sync-transactions suggestions (#28 §14.5)', () => {
     // Scheduled, not run: the response does not wait on Jev.
     expect(suggestCategories).not.toHaveBeenCalled()
     await afterFns[0]()
-    expect(suggestCategories).toHaveBeenCalledExactlyOnceWith('hh-1')
+    expect(suggestCategories).toHaveBeenCalledExactlyOnceWith('hh-1', { startedAt: expect.any(Number) })
+  })
+
+  // after() shares the route's max duration, which starts with the request, so the job's deadline
+  // counts from the start of the handler, not from when after() runs.
+  // The clock moves a minute between the response and after(), so a time read when after() runs fails.
+  it('passes the time the request started as startedAt', async () => {
+    suggestCategories.mockResolvedValue({ suggested: 0 })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-15T12:00:00.000Z'))
+      const requested = Date.now()
+      await POST()
+      vi.setSystemTime(requested + 60_000)
+      await afterFns[0]()
+      expect(suggestCategories).toHaveBeenCalledExactlyOnceWith('hh-1', { startedAt: requested })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   // Its contract says it never throws; the route does not rely on that. A recovering bank makes the

@@ -185,6 +185,27 @@ describe('deleteImpact', () => {
     expect(deleteImpact(transfer, testData(DEFAULTS), 'c-Transfer Out')).toMatchObject({ uncategorized: 0, moved: [], movedMore: 0, toSpending: 0 })
   })
 
+  // Intended (#28 spec §14.6): removing any category changes the catalogue fingerprint, so no
+  // suggestion applies in "after" and a row Jev relabelled shows as moving back to its bank
+  // category. That is what the totals will show until the next sync re-asks Jev.
+  it('counts a row Jev relabelled as moving back to its bank category, with suggestions on', () => {
+    const fp = catalogFingerprint(DEFAULTS)
+    const rows = [r('s', '2026-09', 'Whole Foods', 40, 'FOOD_AND_DRINK', { suggestion: sug(GROCERY.id, 0.99, fp) })]
+    expect(resolveCategory(rows[0], buildCategoryContext(testData(DEFAULTS))).name).toBe('Grocery')
+    expect(deleteImpact(rows, testData(DEFAULTS), 'c-Travel')).toMatchObject({
+      uncategorized: 0,
+      moved: [{ name: 'Food & Drink', count: 1 }],
+      movedMore: 0,
+    })
+  })
+
+  it('counts no move for the same row with suggestions off', () => {
+    const fp = catalogFingerprint(DEFAULTS)
+    const rows = [r('s', '2026-09', 'Whole Foods', 40, 'FOOD_AND_DRINK', { suggestion: sug(GROCERY.id, 0.99, fp) })]
+    const off = testData(DEFAULTS, [], { suggestionsOn: false })
+    expect(deleteImpact(rows, off, 'c-Travel')).toMatchObject({ uncategorized: 0, moved: [], movedMore: 0 })
+  })
+
   it('lists the top three destinations and counts the rest as rows', () => {
     // Five destinations, the fourth and fifth with 2 and 1 rows: the rest is 3 rows, not 2 destinations.
     const cats = [...DEFAULTS, cat('A'), cat('B'), cat('C'), cat('D'), cat('E')]

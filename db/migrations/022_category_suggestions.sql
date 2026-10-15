@@ -1,7 +1,8 @@
 -- Jev category suggestions (#28 spec §14). One row per transaction: Jev's pick among the
 -- household's spending categories, or null for "none of these fits". Applied only at READ time
--- (lib/category-rules.ts resolveCategory step 5), only when CATEGORY_SUGGESTIONS=on, at or above
--- SUGGESTION_THRESHOLD, and only while catalog_fingerprint matches the household's categories.
+-- (spec §5.3 step 5; step 4 in lib/category-rules.ts resolveCategory), only when
+-- CATEGORY_SUGGESTIONS=on, at or above SUGGESTION_THRESHOLD, and only while catalog_fingerprint
+-- matches the household's categories.
 -- Nothing on transactions is written.
 --
 -- Hand-run in the SQL editor and safe to re-run. Creates no rows. Written only by

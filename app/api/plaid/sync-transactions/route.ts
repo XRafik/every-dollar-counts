@@ -21,6 +21,9 @@ const STATUS_FOR = {
 // household. Triggered by the "Refresh" button (and by the webhook route when Plaid says new
 // data is ready).
 export async function POST() {
+  // after() shares this route's max duration, which starts now: the suggestion job's deadline
+  // counts from here (lib/category-suggest.ts RUN_DEADLINE_MS).
+  const startedAt = Date.now()
   const supabase = await createClient()
   const {
     data: { user },
@@ -107,7 +110,7 @@ export async function POST() {
 
   // Jev suggestions (#28 spec §14.5), once the response is sent. Never reaches this response,
   // its status or any bank's health: suggestCategories does not throw, and the catch is a backstop.
-  after(() => suggestCategories(household_id).catch((e) => console.error('[suggest] failed', household_id, e instanceof Error ? e.message : String(e))))
+  after(() => suggestCategories(household_id, { startedAt }).catch((e) => console.error('[suggest] failed', household_id, e instanceof Error ? e.message : String(e))))
 
   return NextResponse.json({
     ok: true,

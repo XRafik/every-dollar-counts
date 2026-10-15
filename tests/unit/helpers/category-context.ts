@@ -6,6 +6,7 @@ import {
   buildCategoryContext,
   merchantKey,
   type CategoryData,
+  type CategoryDataFields,
   type CategoryRule,
   type SuggestionRef,
 } from '@/lib/category-rules'
@@ -45,7 +46,7 @@ export function testData(
   rules: CategoryRule[] = [],
   opts: { suggestionsOn?: boolean } = {}
 ): CategoryData {
-  return { categories, rules, suggestionsOn: opts.suggestionsOn ?? true } as CategoryData
+  return { categories, rules, suggestionsOn: opts.suggestionsOn ?? true } satisfies CategoryDataFields as CategoryData
 }
 
 export function sug(categoryId: string | null, confidence: number, fingerprint: string): SuggestionRef {

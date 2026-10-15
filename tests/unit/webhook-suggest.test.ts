@@ -66,7 +66,23 @@ describe('POST /api/plaid/webhook suggestions (#28 §14.5)', () => {
     expect(res.status).toBe(200)
     expect(afterFns).toHaveLength(1)
     await afterFns[0]()
-    expect(suggestCategories).toHaveBeenCalledExactlyOnceWith('hh-7')
+    expect(suggestCategories).toHaveBeenCalledExactlyOnceWith('hh-7', { startedAt: expect.any(Number) })
+  })
+
+  // The job's deadline counts from the request, as after() shares the route's max duration.
+  // The clock moves a minute between the response and after(), so a time read when after() runs fails.
+  it('passes the time the request started as startedAt', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-10-15T12:00:00.000Z'))
+      const requested = Date.now()
+      await POST(hook({ webhook_type: 'TRANSACTIONS', webhook_code: 'DEFAULT_UPDATE' }))
+      vi.setSystemTime(requested + 60_000)
+      await afterFns[0]()
+      expect(suggestCategories).toHaveBeenCalledExactlyOnceWith('hh-7', { startedAt: requested })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('swallows a rejecting suggestion run', async () => {

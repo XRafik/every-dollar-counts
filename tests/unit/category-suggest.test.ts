@@ -186,7 +186,12 @@ describe('suggestCategories: gates', () => {
   it('an environment check that cannot run is a failure, not a skip', async () => {
     assertEnvMatchesDatabase.mockRejectedValue(new Error('could not read app_env: boom'))
     await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 0, written: 0 })
-    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', HH, 'could not read app_env: boom')
+    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', {
+      householdId: HH,
+      asked: 0,
+      written: 0,
+      error: 'could not read app_env: boom',
+    })
     expect(askChoices).not.toHaveBeenCalled()
   })
 })
@@ -244,6 +249,18 @@ describe('suggestCategories: the read and the rows asked about', () => {
     const out = await suggestCategories(HH)
     expect(asked().map((q) => q.length)).toEqual([20, 20, 20, 20, 20, 20, 20, 20, 20, 20])
     expect(out).toMatchObject({ status: 'done', asked: 200 })
+  })
+
+  // The read goes through withSuggestion, which normalises an array-shaped embed; read raw, an array
+  // has no catalog_fingerprint, so the row would be due and re-asked on every sync.
+  it('a current suggestion that arrives array-shaped is not due', async () => {
+    seed([
+      txn('current', { suggestion: [sug(GROCERY.id, 0.95, FP)] as never }),
+      txn('empty', { suggestion: [] as never }),
+    ])
+    const out = await suggestCategories(HH)
+    expect(asked()).toEqual([['empty']])
+    expect(out).toEqual({ status: 'done', asked: 1, written: 1, inputTokens: 100 })
   })
 
   it('makes no call when nothing is due', async () => {
@@ -343,6 +360,36 @@ describe('suggestCategories: the run deadline', () => {
     })
   })
 
+  // after() shares the route's max duration, which starts with the request, so the budget counts
+  // from `startedAt` (the route's), not from when the job began.
+  it('a startedAt a whole budget ago starts no batch, and the done line says why', async () => {
+    seed([txn('a')])
+    const out = await suggestCategories(HH, { startedAt: Date.now() - RUN_DEADLINE_MS })
+    expect(askChoices).not.toHaveBeenCalled()
+    expect(out).toEqual({ status: 'done', asked: 0, written: 0, inputTokens: 0 })
+    expect(logSpy).toHaveBeenCalledWith('[suggest] done', {
+      householdId: HH,
+      asked: 0,
+      written: 0,
+      inputTokens: 0,
+      stoppedAtDeadline: true,
+    })
+  })
+
+  it('time the request spent before the job counts against the budget', async () => {
+    seed(Array.from({ length: 25 }, (_, i) => txn(`t${String(i).padStart(2, '0')}`)))
+    let clock = 150_000
+    answering()
+    const answer = askChoices.getMockImplementation()!
+    askChoices.mockImplementation(async (req: Req) => {
+      clock += 50_000 // 150s before the job + 50s = the whole budget
+      return answer(req)
+    })
+    const out = await suggestCategories(HH, { now: () => clock, startedAt: 0 })
+    expect(askChoices).toHaveBeenCalledTimes(1)
+    expect(out).toEqual({ status: 'done', asked: 20, written: 20, inputTokens: 100 })
+  })
+
   it('just under the deadline still starts the next batch', async () => {
     seed(Array.from({ length: 25 }, (_, i) => txn(`t${String(i).padStart(2, '0')}`)))
     let clock = 0
@@ -358,13 +405,59 @@ describe('suggestCategories: the run deadline', () => {
   })
 })
 
+// Rows are asked newest first, so a batch that always fails would be first on every sync and block
+// every row behind it. A failure that belongs to the batch (400, 422, an answer askChoices rejects)
+// skips that batch; anything that would fail every batch still ends the run (below).
+describe('suggestCategories: one bad batch', () => {
+  const rows25 = () => Array.from({ length: 25 }, (_, i) => txn(`t${String(i).padStart(2, '0')}`))
+
+  it.each([
+    ['a 422', new TypeSafeError('TypeSafe request failed: 422', 422), 422],
+    ['a 400', new TypeSafeError('TypeSafe request failed: 400', 400), 400],
+    ['an invalid answer', new TypeSafeError('invalid response: no answer for question t3', 'invalid'), 'invalid'],
+  ] as const)('%s on batch 1 of 2: logged, skipped, and batch 2 is still asked and written', async (_, err, status) => {
+    seed(rows25())
+    askChoices.mockRejectedValueOnce(err)
+    const out = await suggestCategories(HH)
+    expect(askChoices).toHaveBeenCalledTimes(2)
+    expect(db.upserts).toHaveLength(1)
+    expect(db.upserts[0].payload.map((r) => r.transaction_id)).toEqual(['t04', 't03', 't02', 't01', 't00'])
+    expect(errSpy).toHaveBeenCalledWith('[suggest] batch failed', { householdId: HH, batch: 0, rows: 20, status })
+    // asked counts rows sent to Jev and answered; the failed batch is in neither count.
+    expect(out).toEqual({ status: 'done', asked: 5, written: 5, inputTokens: 100 })
+    expect(logSpy).toHaveBeenCalledWith('[suggest] done', { householdId: HH, asked: 5, written: 5, inputTokens: 100 })
+    expect(logs(errSpy)).not.toContain('[suggest] failed')
+    expectNoDetailsLogged()
+  })
+
+  it('every batch failing per-batch is still done, with nothing written', async () => {
+    seed(rows25())
+    askChoices.mockRejectedValue(new TypeSafeError('TypeSafe request failed: 422', 422))
+    await expect(suggestCategories(HH)).resolves.toEqual({ status: 'done', asked: 0, written: 0, inputTokens: 0 })
+    expect(askChoices).toHaveBeenCalledTimes(2)
+    expect(errSpy).toHaveBeenCalledWith('[suggest] batch failed', { householdId: HH, batch: 1, rows: 5, status: 422 })
+  })
+
+  it('an error that is not a TypeSafeError is not treated as per-batch', async () => {
+    seed(rows25())
+    askChoices.mockRejectedValueOnce(Object.assign(new Error('x'), { status: 422 }))
+    await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 0, written: 0 })
+    expect(askChoices).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('suggestCategories: failures never throw', () => {
   it('a TypeSafe failure writes nothing for the batch and returns failed', async () => {
     seed([txn('a')])
     askChoices.mockRejectedValue(new TypeSafeError('TypeSafe request failed: 500', 500))
     await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 0, written: 0 })
     expect(db.upserts).toEqual([])
-    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', HH, 'TypeSafe request failed: 500')
+    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', {
+      householdId: HH,
+      asked: 0,
+      written: 0,
+      error: 'TypeSafe request failed: 500',
+    })
     expectNoDetailsLogged()
   })
 
@@ -374,6 +467,15 @@ describe('suggestCategories: failures never throw', () => {
     askChoices.mockImplementationOnce(askChoices.getMockImplementation()!).mockRejectedValueOnce(new TypeSafeError('x', 529))
     await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 20, written: 20 })
     expect(db.upserts).toHaveLength(1)
+  })
+
+  it('a 401 on the first batch ends the run: the second is never asked', async () => {
+    seed(Array.from({ length: 25 }, (_, i) => txn(`t${String(i).padStart(2, '0')}`)))
+    askChoices.mockRejectedValueOnce(new TypeSafeError('TypeSafe request failed: 401', 401))
+    await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 0, written: 0 })
+    expect(askChoices).toHaveBeenCalledTimes(1)
+    expect(db.upserts).toEqual([])
+    expect(logs(logSpy)).not.toContain('[suggest] done')
   })
 
   it('an upsert error stops the run: failed, and no further TypeSafe call (Review Focus 4)', async () => {
@@ -390,7 +492,13 @@ describe('suggestCategories: failures never throw', () => {
     db.upsertResults = [{ count: 19, error: null }]
     await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 20, written: 0 })
     expect(askChoices).toHaveBeenCalledTimes(1)
-    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', HH, 'wrote 19 of 20 suggestions')
+    // The progress so far rides on the failure line (asked 20, written 0).
+    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', {
+      householdId: HH,
+      asked: 20,
+      written: 0,
+      error: 'wrote 19 of 20 suggestions',
+    })
   })
 
   it('a spending category named none fails the run before any call (Review Focus 2)', async () => {
@@ -412,7 +520,12 @@ describe('suggestCategories: failures never throw', () => {
     await expect(suggestCategories(HH)).resolves.toEqual({ status: 'failed', asked: 0, written: 0 })
     expect(askChoices).not.toHaveBeenCalled()
     expect(db.upserts).toEqual([])
-    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', HH, 'could not read transactions: boom')
+    expect(errSpy).toHaveBeenCalledWith('[suggest] failed', {
+      householdId: HH,
+      asked: 0,
+      written: 0,
+      error: 'could not read transactions: boom',
+    })
   })
 
   it('an empty body on the read is a failure too, not "nothing to suggest"', async () => {

@@ -6,7 +6,7 @@ import 'server-only'
 // This module NEVER logs: callers log. The request body holds transaction details, so it must not
 // reach a log line or an error message. Errors carry the status only, never TypeSafe's response
 // body, which can echo request content (a 422 names the offending field).
-import type { ChoiceQuestion } from './category-suggest-request'
+import type { BatchRequest, ChoiceQuestion } from './category-suggest-request'
 
 const ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
 const MODEL = 'jev-latest'
@@ -21,10 +21,13 @@ export type ChoicesResult = {
   usage: { input_tokens: number; output_tokens: number }
 }
 
+// `status` is the HTTP status; 'invalid' when the response arrived but validate() rejected it; null
+// when no response came (no key, network error, timeout). The job reads it to tell a failure that
+// belongs to one batch (400, 422, 'invalid') from one that would hit every batch.
 export class TypeSafeError extends Error {
   constructor(
     message: string,
-    readonly status: number | null
+    readonly status: number | 'invalid' | null
   ) {
     super(message)
     this.name = 'TypeSafeError'
@@ -34,7 +37,7 @@ export class TypeSafeError extends Error {
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 export async function askChoices(
-  req: { state: unknown; questions: Record<string, ChoiceQuestion> },
+  req: BatchRequest,
   deps: { fetch?: typeof fetch; sleep?: (ms: number) => Promise<void> } = {}
 ): Promise<ChoicesResult> {
   const key = process.env.TYPESAFE_API_KEY
@@ -75,7 +78,7 @@ export async function askChoices(
     } catch {
       throw new TypeSafeError('unreadable response', res.status)
     }
-    return validate(parsed, req.questions, res.status)
+    return validate(parsed, req.questions)
   }
 }
 
@@ -90,8 +93,8 @@ function isFiniteNumber(v: unknown): v is number {
 // Checks the response against the questions actually asked, and returns only their answers. A
 // choice must be one of that question's own criteria keys, so nothing downstream can store a
 // category the household was never offered.
-function validate(body: unknown, questions: Record<string, ChoiceQuestion>, status: number): ChoicesResult {
-  const bad = (what: string) => new TypeSafeError(`invalid response: ${what}`, status)
+function validate(body: unknown, questions: Record<string, ChoiceQuestion>): ChoicesResult {
+  const bad = (what: string) => new TypeSafeError(`invalid response: ${what}`, 'invalid')
   if (!isRecord(body)) throw bad('not an object')
   if (typeof body.model !== 'string') throw bad('model is not a string')
   const usage = body.usage

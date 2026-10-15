@@ -32,6 +32,7 @@ import {
   readTransactionsForCounts,
   suggestionsEnabled,
   SUGGESTION_EMBED,
+  withSuggestion,
 } from '@/lib/category-context'
 import { readAllRows } from '@/lib/read-all'
 import { idPagedTable, pagedTable, ruleRows, txnRows } from '../stubs/postgrest-pages'
@@ -229,6 +230,32 @@ describe('fetchCategoryDataForHousehold', () => {
 describe('SUGGESTION_EMBED', () => {
   it('embeds the row\'s suggestion as `suggestion`, with the three columns resolveCategory reads', () => {
     expect(SUGGESTION_EMBED).toBe('suggestion:category_suggestions(category_id, confidence, catalog_fingerprint)')
+  })
+})
+
+// The type says object or null; a PostgREST that ever returned the embed as an array would make the
+// job treat every row as due and re-ask it on every sync, so the rows are normalised, not just retyped.
+describe('withSuggestion', () => {
+  const S = { category_id: 'c1', confidence: 0.9, catalog_fingerprint: 'fp' }
+
+  it('turns a one-element array into its element', () => {
+    expect(withSuggestion([{ id: 'a', suggestion: [S] }])).toEqual([{ id: 'a', suggestion: S }])
+  })
+
+  it('turns an empty array into null', () => {
+    expect(withSuggestion([{ id: 'a', suggestion: [] }])).toEqual([{ id: 'a', suggestion: null }])
+  })
+
+  it('passes an object or null through, and keeps every other column', () => {
+    expect(
+      withSuggestion([
+        { id: 'a', merchant_name: 'M', suggestion: S },
+        { id: 'b', merchant_name: null, suggestion: null },
+      ])
+    ).toEqual([
+      { id: 'a', merchant_name: 'M', suggestion: S },
+      { id: 'b', merchant_name: null, suggestion: null },
+    ])
   })
 })
 

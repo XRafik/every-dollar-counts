@@ -4,7 +4,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from './supabase/server'
 import { supabaseAdmin } from './supabase/admin'
 import { readAllById, readAllRows } from './read-all'
-import type { CategorizableTxn, CategoryData, CategoryRule, SuggestionRef } from './category-rules'
+import type {
+  CategorizableTxn,
+  CategoryData,
+  CategoryDataFields,
+  CategoryRule,
+  SuggestionRef,
+} from './category-rules'
 import type { Category } from './categories'
 
 // Spec §14.7: CATEGORY_SUGGESTIONS=on switches Jev's suggestions on, for both the job and every
@@ -17,15 +23,20 @@ export function suggestionsEnabled(): boolean {
 // request. Every transactions select whose rows reach resolveCategory appends it.
 export const SUGGESTION_EMBED = 'suggestion:category_suggestions(category_id, confidence, catalog_fingerprint)'
 
-// Every page's rows go through this once, straight after the read. Without generated database
-// types, supabase-js types every embed as an array, but category_suggestions' primary key is
-// transaction_id, so PostgREST returns this one as an object or null (resolveCategory ignores an
-// array anyway). It retypes only `suggestion`; every other column keeps its inferred type, and a
-// select that drops the embed has no `suggestion` and fails here, so §7.4's tsc guard still holds.
+// Every page's rows, and the suggestion job's, go through this once, straight after the read.
+// Without generated database types, supabase-js types every embed as an array, but
+// category_suggestions' primary key is transaction_id, so PostgREST returns this one as an object or
+// null. Should an array ever arrive, its first element (or null) is kept: the job would otherwise see
+// no fingerprint and re-ask the row on every sync (resolveCategory still ignores an array, as a
+// second guard). Only `suggestion` changes; every other column keeps its inferred type, and a select
+// that drops the embed has no `suggestion` and fails here, so §7.4's tsc guard still holds.
 export function withSuggestion<T extends { suggestion: unknown }>(
   rows: T[]
 ): (Omit<T, 'suggestion'> & { suggestion: SuggestionRef | null })[] {
-  return rows as (Omit<T, 'suggestion'> & { suggestion: SuggestionRef | null })[]
+  return rows.map((t) => {
+    const s = t.suggestion
+    return { ...t, suggestion: (Array.isArray(s) ? (s[0] ?? null) : s) as SuggestionRef | null }
+  })
 }
 
 // The ONE read of the household's categories and category rules (#28 spec §7.1). Every money page
@@ -69,13 +80,13 @@ async function readCategoryData(supabase: SupabaseClient, householdId: string | 
         '(has db/migrations/021, including its grants, been applied?)'
     )
   }
-  // The one place outside lib/category-rules.ts that brands CategoryData. The cast means tsc does
-  // not check these fields, so suggestionsOn is set here explicitly and tested.
+  // The one place outside lib/category-rules.ts that brands CategoryData. `satisfies` checks the
+  // fields before the cast adds the brand, so a dropped suggestionsOn fails tsc; it is also tested.
   return {
     categories: cats.data as Category[],
     rules: rules.data as CategoryRule[],
     suggestionsOn: suggestionsEnabled(),
-  } as CategoryData
+  } satisfies CategoryDataFields as CategoryData
 }
 
 // "42501 permission denied", or just the message when there is no code.

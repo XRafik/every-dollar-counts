@@ -37,6 +37,9 @@ const DATA_READY = new Set([
 ])
 
 export async function POST(req: Request) {
+  // after() shares this route's max duration, which starts now: the suggestion job's deadline
+  // counts from here (lib/category-suggest.ts RUN_DEADLINE_MS).
+  const startedAt = Date.now()
   // Shared secret on the URL registered with Plaid. This is a pragmatic guard, not Plaid's full
   // JWT verification (/webhook_verification_key/get + ES256). What it buys and doesn't: it stops
   // anonymous internet noise, but a leaked URL is a leaked credential. The blast radius is small —
@@ -91,7 +94,7 @@ export async function POST(req: Request) {
     // Jev suggestions (#28 spec §14.5), as the Refresh route does, once Plaid has its answer. The
     // Refresh route may schedule a run for the same rows; that costs tokens only.
     const household_id = item.household_id
-    after(() => suggestCategories(household_id).catch((e) => console.error('[suggest] failed', household_id, e instanceof Error ? e.message : String(e))))
+    after(() => suggestCategories(household_id, { startedAt }).catch((e) => console.error('[suggest] failed', household_id, e instanceof Error ? e.message : String(e))))
   }
 
   return NextResponse.json({ ok: true })

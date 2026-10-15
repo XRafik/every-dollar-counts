@@ -35,6 +35,13 @@ type SentTransaction = {
   bank_category: string
 }
 
+// What buildBatchRequest returns, and the only thing askChoices (lib/typesafe.ts) accepts, so no
+// other shape can be sent to TypeSafe.
+export type BatchRequest = {
+  state: { household_examples: Example[]; transactions: SentTransaction[] }
+  questions: Record<string, ChoiceQuestion>
+}
+
 function spendingNames(data: CategoryData): Map<string, string> {
   const spending = spendingCategories(data.categories, buildKindContext(data.categories))
   return new Map(spending.map((c) => [c.id, c.name]))
@@ -100,10 +107,7 @@ export function buildBatchRequest(
   rows: SuggestRow[],
   options: Record<string, string | null>,
   examples: Example[]
-): {
-  state: { household_examples: Example[]; transactions: SentTransaction[] }
-  questions: Record<string, ChoiceQuestion>
-} {
+): BatchRequest {
   if (rows.length > BATCH_SIZE) throw new Error(`a batch holds at most ${BATCH_SIZE} rows, got ${rows.length}`)
   // A repeated row would be asked twice and upserted twice in one statement, which Postgres refuses.
   if (new Set(rows.map((r) => r.id)).size !== rows.length) throw new Error('a batch repeats a transaction id')
