@@ -244,13 +244,13 @@ export function checkTxnReads(files) {
 const CATEGORY_READS_ALLOWED = new Map([
   ['lib/category-context.ts', 'The one read every page goes through.'],
   ['app/api/categories/route.ts', 'Manages categories.'],
-  ['app/api/transactions/categorize/route.ts', 'Validates a pick against the whole category list (PR 3 also builds its KindContext from it).'],
+  ['app/api/transactions/categorize/route.ts', 'Validates a pick against the whole category list, and builds the kind gate for learning from it.'],
   ['app/api/category-rules/route.ts', 'Validates a Change: the target must count the same way.'],
 ])
 const PFC_TO_NAME_ALLOWED = new Set(['lib/categories.ts', 'lib/category-rules.ts'])
 const RULES_READS_ALLOWED = new Map([
   ['lib/category-context.ts', 'The one read every page goes through.'],
-  ['app/api/transactions/categorize/route.ts', 'From PR 3: learns a rule from a first pick (spec §6.1 step 8).'],
+  ['app/api/transactions/categorize/route.ts', 'Learns a rule from a first pick (spec §6.1 step 8).'],
   ['app/api/category-rules/route.ts', 'Change and Remove.'],
 ])
 const USER_CATEGORY_WRITERS = new Map([

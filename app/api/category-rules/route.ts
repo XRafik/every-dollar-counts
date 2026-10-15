@@ -5,7 +5,7 @@ import { assertEnvMatchesDatabase, envGuardResponse } from '@/lib/app-env'
 import { buildKindContext, kindOf } from '@/lib/category-rules'
 
 // Settings → Category rules: Change (PATCH) and Remove (DELETE). #28 spec §6.2. No POST: creating a
-// rule from scratch is out of scope; rules come from the seed and, from PR 3, from a first pick.
+// rule from scratch is out of scope; rules come from the seed and from a first pick (spec §6.1 step 8).
 //
 // The client always sends the category it was SHOWING (`expectedCategoryId`), and every write is
 // filtered on it, so an action applies only to the rule the person saw. Every message may be shown
@@ -126,7 +126,7 @@ export async function PATCH(req: Request) {
 }
 
 // Remove: forget the rule (spec decision 6). Its rows go back to their bank category, hand picks
-// keep theirs, and the merchant's next pick teaches again (from PR 3).
+// stay as they are, and the merchant's next pick makes a new rule.
 export async function DELETE(req: Request) {
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null
   const id = text(body?.id)

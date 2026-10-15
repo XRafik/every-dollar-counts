@@ -25,19 +25,21 @@ const ORIGIN: Record<CategoryRule['origin'], string> = {
 const txns = (n: number) => `${n} transaction${n === 1 ? '' : 's'}`
 
 // Settings → Category rules (#28 spec §8.3): every rule, with what it does, a Change of category
-// within its kind, and Remove. Rules are created by picking (PR 3) and by the one-time seed, never
-// here.
+// within its kind, and Remove. Rules are created by a first pick on a transaction (spec §6.1 step 8)
+// and by the one-time seed, never here.
 export function CategoryRulesCard({ rules, categories }: { rules: RuleView[]; categories: RuleCategory[] }) {
   const sorted = [...rules].sort((a, b) => a.merchantLabel.localeCompare(b.merchantLabel, undefined, { sensitivity: 'base' }))
   return (
     <div className="space-y-3">
-      {/* PR 3 (#28 spec §6.1 step 8) restores the spec's wording about learning from a pick. */}
       <p className="text-sm text-muted">
-        Each rule files one merchant&apos;s transactions under a category of your choosing, past and future. A rule
-        never moves money between spending, transfers and income, and never touches card payments.
+        When you pick a category for a merchant the app hasn&apos;t learned yet, it files that merchant&apos;s other
+        transactions the same way, past and future. It never moves money between spending, transfers and income, and
+        never touches card payments.
       </p>
       {sorted.length === 0 ? (
-        <p className="text-sm text-muted">No category rules yet.</p>
+        <p className="text-sm text-muted">
+          Nothing learned yet. Pick a category on a transaction and the app will remember it for that merchant.
+        </p>
       ) : (
         <ul className="divide-y divide-line">
           {sorted.map((r) => (
@@ -202,10 +204,11 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
           void send('DELETE', { id: rule.id, expectedCategoryId: rule.categoryId })
         }}
       >
-        {rule.changed === 1 && <p>1 {label} transaction goes back to its bank’s category.</p>}
-        {rule.changed > 1 && <p>{rule.changed} {label} transactions go back to their bank’s category.</p>}
-        {rule.pickedByHand === 1 && <p>1 you picked by hand keeps its category.</p>}
-        {rule.pickedByHand > 1 && <p>{rule.pickedByHand} you picked by hand keep theirs.</p>}
+        {rule.changed === 1 && <p>1 {label} transaction goes back to the category its bank gave it.</p>}
+        {rule.changed > 1 && <p>{rule.changed} {label} transactions go back to the categories their bank gave them.</p>}
+        {rule.pickedByHand === 1 && <p>1 you set yourself stays as it is.</p>}
+        {rule.pickedByHand > 1 && <p>{rule.pickedByHand} you set yourself stay as they are.</p>}
+        <p>To make a new rule later, pick a category on any {label} transaction.</p>
         {rule.matching === 0 && (
           <p>No {label} transactions are showing right now — for example, if a bank is disconnected.</p>
         )}

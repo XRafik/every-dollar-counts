@@ -3,7 +3,7 @@
 - **Repo:** `smilne3/every-dollar-counts`
 - **Date:** 2026-09-11
 - **Closes:** #28
-- **Status:** Rules design (§1–§13) approved in brainstorming on 2026-09-11 and revised after an adversarial review. Jev suggestions (§14) added and approved in brainstorming on 2026-10-07, after a probe on live data. Awaiting owner review of the revised spec. PR 1 merged as #142; PR 2 is #146.
+- **Status:** Rules design (§1–§13) approved in brainstorming on 2026-09-11 and revised after an adversarial review. Jev suggestions (§14) added and approved on 2026-10-07. PR 1 merged as #142, PR 2 as #146 (22 rules live since 2026-10-09). PR 3 (learning) is #152.
 - **One line:** The first time you file a merchant under a category, the app remembers it as a household rule and applies it to that merchant's other transactions, past and future. Rules are resolved whenever a page reads, never written onto a transaction, so changing or removing one moves every row with it. For merchants with no rule, Jev (TypeSafe) suggests one of the household's own categories, applied automatically when it is confident and never across spending, transfers and income (§14).
 
 ### Changes since 2026-09-11
@@ -504,9 +504,9 @@ A new client component, `components/CategoryRulesCard.tsx`, rendered in `<Card i
   - Below `sm` the row takes two lines, so nothing is wider than a phone.
 - **Change** saves on select, rolling back with an inline alert on failure. There's no confirmation, because picking again undoes it.
 - **Remove** opens `ConfirmDialog`, with title "Remove the Safeway rule?" and confirm label "Remove". The body shows only the lines that apply:
-  - "145 Safeway transactions go back to their bank's category." (omitted when the count is 0)
-  - "14 you picked by hand keep theirs." (omitted when the count is 0)
-  - "The next category you pick for Safeway will teach the app again."
+  - "145 Safeway transactions go back to the categories their bank gave them." (omitted when the count is 0)
+  - "14 you set yourself stay as they are." (omitted when the count is 0)
+  - "To make a new rule later, pick a category on any Safeway transaction." (reworded 2026-10-14 after the owner's phone check: "teach the app again" was unclear)
 - **No current transactions.** A rule whose key matches no non-removed row shows "No current transactions" and its origin. That happens when a bank is disconnected or Plaid renamed the merchant, and the label keeps it from looking broken. Its Remove dialog adds: "No Safeway transactions are showing right now — for example, if a bank is disconnected."
 - **Empty state:** "Nothing learned yet. Pick a category on a transaction and the app will remember it for that merchant."
 - **Mutations** use `fetch` then `router.refresh()`, the repo's pattern; there are no Server Actions. The §8.2 success rule applies: `res.ok`, not redirected, and a JSON `ok: true`.
