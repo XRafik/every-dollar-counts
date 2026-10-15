@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/trends-page.test.tsx: the static page import below
 // is linked before this file's body runs, firing the mock factory.
-const { results, tz, presentation, paged, history } = vi.hoisted(() => ({
+const { results, tz, presentation, paged, history, selects } = vi.hoisted(() => ({
+  // Every `.select()` the page sends, per table, so a test can pin the suggestion embed (§7.4).
+  selects: {} as Record<string, string[]>,
   // What lib/history-start answers. Mocked so these tests can tell a page that takes the history
   // start from historyStart apart from one that guesses it from its own transaction read: this
   // stub serves the whole fixture to every query, so the two would otherwise always agree.
@@ -20,6 +22,10 @@ const { results, tz, presentation, paged, history } = vi.hoisted(() => ({
 const chainFor = (table: string) => {
   const chain: Record<string, unknown> = {}
   for (const m of ['select', 'order', 'eq', 'gte', 'lte', 'limit', 'not']) chain[m] = () => chain
+  chain.select = (cols: string) => {
+    (selects[table] ??= []).push(cols)
+    return chain
+  }
   // readAllRows (lib/read-all.ts) asks for the rows after its cursor with .or(); there are none
   // past this fixture, so a continuation page is empty and the read ends.
   let afterCursor = false
@@ -45,15 +51,20 @@ vi.mock('@/lib/supabase/server', () => ({
 // Categories and rules come through lib/category-context.ts (#28), whose own test covers paging.
 // Built from `results.categories` / `results.category_rules`, so a failed categories read still
 // rejects with the page's message.
-vi.mock('@/lib/category-context', async () => {
+// The real module otherwise, so the page gets the real SUGGESTION_EMBED and the switch is read by
+// the real suggestionsEnabled (spec §14.7). Its admin client is never used here.
+vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: {} }))
+vi.mock('@/lib/category-context', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/category-context')>()
   const { testData } = await import('./helpers/category-context')
   return {
+    ...actual,
     fetchCategoryContext: async () => {
       const c = results.categories ?? { data: [], error: null }
       if (c.error) throw new Error(`could not read categories: ${c.error.message}`)
       const r = results.category_rules ?? { data: [], error: null }
       if (r.error) throw new Error(`could not read category rules: ${r.error.message}`)
-      return testData(c.data as never, r.data as never)
+      return testData(c.data as never, r.data as never, { suggestionsOn: actual.suggestionsEnabled() })
     },
     readTransactionsForCounts: async () => {
       const t = results.transactions ?? { data: [], error: null }
@@ -90,6 +101,8 @@ import DashboardPage from '@/app/(app)/dashboard/page'
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
 import { moneyWhole } from '@/lib/format'
+import { catalogFingerprint } from '@/lib/category-rules'
+import { sug } from './helpers/category-context'
 
 const render = () => DashboardPage({ searchParams: Promise.resolve({}) })
 
@@ -189,6 +202,12 @@ beforeEach(() => {
   results.budgets = { data: [], error: null }
   paged.transactions = null
   history.value = { kind: 'none' }
+  for (const k of Object.keys(selects)) delete selects[k]
+  vi.unstubAllEnvs()
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 describe('Dashboard average savings (#126)', () => {
@@ -657,6 +676,66 @@ describe('Dashboard reads', () => {
       error: null,
     }
     expect(recentItemsOf(await render())![0].category).toBe('Grocery')
+  })
+
+  // Spec §14.3/§14.7: a Whole Foods row with no rule takes Jev's confident suggestion, in Recent
+  // activity and in the Spent figure's budget, and only while CATEGORY_SUGGESTIONS is on.
+  describe('Jev suggestions', () => {
+    const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
+    const GROCERY = { id: 'c-grocery', name: 'Grocery', pfc_primary: null, sort_order: 1 }
+    const wholeFoods = (suggestion: unknown) => ({
+      id: 'r2', name: 'WHOLEFDS #10', merchant_name: 'Whole Foods', amount: 30, date: '2026-09-01',
+      user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: null, suggestion,
+    })
+    const seed = (rows: unknown[]) => {
+      results.categories = { data: [FOOD, GROCERY], error: null }
+      results.category_rules = { data: [], error: null }
+      results.transactions = { data: rows, error: null }
+      // Budgeted on Grocery only, so the Spent tile's note moves with the row's category.
+      results.budgets = { data: [{ category: 'Grocery', monthly_limit: 100 }], error: null }
+    }
+    const spentFoot = (tree: unknown) =>
+      textOf(findStatCards(tree).find((c) => c.props.label.startsWith('Spent in'))!.props.foot)
+
+    it('labels Whole Foods Grocery through its suggestion when suggestions are on', async () => {
+      vi.stubEnv('CATEGORY_SUGGESTIONS', 'on')
+      seed([wholeFoods(sug(GROCERY.id, 0.99, catalogFingerprint([FOOD, GROCERY])))])
+      const tree = await render()
+      expect(recentItemsOf(tree)![0].category).toBe('Grocery')
+      expect(spentFoot(tree)).toContain('$30.00 of $100.00 budgeted')
+    })
+
+    it('leaves Whole Foods Food & Drink when suggestions are off', async () => {
+      vi.stubEnv('CATEGORY_SUGGESTIONS', undefined)
+      seed([wholeFoods(sug(GROCERY.id, 0.99, catalogFingerprint([FOOD, GROCERY])))])
+      const tree = await render()
+      expect(recentItemsOf(tree)![0].category).toBe('Food & Drink')
+      expect(spentFoot(tree)).toContain('$0.00 of $100.00 budgeted')
+    })
+
+    // Review Focus 5: switching on changes nothing for rows that carry no suggestion.
+    it('renders the same with the switch on as off when no row has a suggestion', async () => {
+      const shown = async () => {
+        seed([wholeFoods(null)])
+        const tree = await render()
+        return { recent: recentItemsOf(tree)!.map((i) => i.category), foot: spentFoot(tree) }
+      }
+      vi.stubEnv('CATEGORY_SUGGESTIONS', 'on')
+      const on = await shown()
+      vi.stubEnv('CATEGORY_SUGGESTIONS', undefined)
+      const off = await shown()
+      expect(on.recent).toEqual(['Food & Drink'])
+      expect(on).toEqual(off)
+    })
+
+    // Spec §7.4's coverage guard: both transactions reads (the window and Recent activity) carry
+    // the embed.
+    it('selects each transaction\'s suggestion in both reads', async () => {
+      seed([wholeFoods(null)])
+      await render()
+      expect(new Set(selects.transactions).size).toBe(2)
+      for (const cols of selects.transactions) expect(cols).toContain('category_suggestions(')
+    })
   })
 
   // The stage's entire visible payload is these two class strings and nothing else asserts them.

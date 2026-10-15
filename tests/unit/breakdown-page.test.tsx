@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/budgets-page.test.tsx and tests/unit/trends-page.test.tsx:
 // the static page import below is linked before this file's body runs, firing the mock factory.
-const { results, calls, tz, history } = vi.hoisted(() => ({
+const { results, calls, tz, history, selects } = vi.hoisted(() => ({
+  // Every `.select()` the page sends, per table, so a test can pin the suggestion embed (§7.4).
+  selects: {} as Record<string, string[]>,
   // What lib/history-start answers; see tests/unit/dashboard-page.test.tsx for why it is mocked.
   history: { value: { kind: 'none' } as { kind: 'ready'; month: string } | { kind: 'pending'; bank: string } | { kind: 'none' } },
   results: {} as Record<string, { data: unknown; error: { message: string } | null }>,
@@ -16,6 +18,10 @@ const { results, calls, tz, history } = vi.hoisted(() => ({
 const chainFor = (table: string) => {
   const chain: Record<string, unknown> = {}
   for (const m of ['select', 'order', 'eq', 'lte', 'limit', 'not']) chain[m] = () => chain
+  chain.select = (cols: string) => {
+    (selects[table] ??= []).push(cols)
+    return chain
+  }
   // readAllRows (lib/read-all.ts) asks for the rows after its cursor with .or(); there are none
   // past this fixture, so a continuation page is empty and the read ends.
   let afterCursor = false
@@ -42,15 +48,20 @@ vi.mock('@/lib/supabase/server', () => ({
 // Categories and rules come through lib/category-context.ts (#28), whose own test covers paging.
 // Built from `results.categories` / `results.category_rules`, so a failed categories read still
 // rejects with the page's message.
-vi.mock('@/lib/category-context', async () => {
+// The real module otherwise, so the page gets the real SUGGESTION_EMBED and the switch is read by
+// the real suggestionsEnabled (spec §14.7). Its admin client is never used here.
+vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: {} }))
+vi.mock('@/lib/category-context', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/category-context')>()
   const { testData } = await import('./helpers/category-context')
   return {
+    ...actual,
     fetchCategoryContext: async () => {
       const c = results.categories ?? { data: [], error: null }
       if (c.error) throw new Error(`could not read categories: ${c.error.message}`)
       const r = results.category_rules ?? { data: [], error: null }
       if (r.error) throw new Error(`could not read category rules: ${r.error.message}`)
-      return testData(c.data as never, r.data as never)
+      return testData(c.data as never, r.data as never, { suggestionsOn: actual.suggestionsEnabled() })
     },
     readTransactionsForCounts: async () => {
       const t = results.transactions ?? { data: [], error: null }
@@ -69,6 +80,8 @@ vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value 
 
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
+import { catalogFingerprint } from '@/lib/category-rules'
+import { sug } from './helpers/category-context'
 
 const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
 const GROCERY = { id: 'c-grocery', name: 'Grocery', pfc_primary: null, sort_order: 1 }
@@ -85,6 +98,12 @@ beforeEach(() => {
   results.categories = { data: [], error: null }
   results.category_rules = { data: [], error: null }
   results.transactions = { data: [], error: null }
+  for (const k of Object.keys(selects)) delete selects[k]
+  vi.unstubAllEnvs()
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 // net-worth and cash never touch a date — only spent and saved read the household's month, and
@@ -233,6 +252,53 @@ describe('Breakdown categories and rules (#28)', () => {
       ['Money out (spending)', 42],
     ])
     expect(withRule).toEqual(without)
+  })
+
+  // Spec §14.3/§14.7: a Whole Foods row with no rule takes Jev's confident suggestion, and only
+  // while CATEGORY_SUGGESTIONS is on.
+  const wholeFoods = (suggestion: unknown) => ({
+    id: 't3', amount: 30, date: '2026-09-11', merchant_name: 'Whole Foods', user_category: null,
+    pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, reimbursable_amount: null, suggestion,
+  })
+  const spentRows = async (rows: unknown[]) => {
+    results.categories = { data: [FOOD, GROCERY], error: null }
+    results.category_rules = { data: [], error: null }
+    results.transactions = { data: rows, error: null }
+    return lists(await render('spent'))[0].rows
+  }
+
+  it('lists Whole Foods under Grocery through its suggestion when suggestions are on', async () => {
+    vi.stubEnv('CATEGORY_SUGGESTIONS', 'on')
+    const rows = await spentRows([wholeFoods(sug(GROCERY.id, 0.99, catalogFingerprint([FOOD, GROCERY])))])
+    expect(rows).toContainEqual(expect.objectContaining({ label: 'Grocery', amount: 30 }))
+    expect(rows.some((r) => r.label === 'Food & Drink')).toBe(false)
+  })
+
+  it('lists Whole Foods under Food & Drink when suggestions are off', async () => {
+    vi.stubEnv('CATEGORY_SUGGESTIONS', undefined)
+    const rows = await spentRows([wholeFoods(sug(GROCERY.id, 0.99, catalogFingerprint([FOOD, GROCERY])))])
+    expect(rows).toContainEqual(expect.objectContaining({ label: 'Food & Drink', amount: 30 }))
+    expect(rows.some((r) => r.label === 'Grocery')).toBe(false)
+  })
+
+  // Review Focus 5: switching on changes nothing for rows that carry no suggestion.
+  it('lists the same with the switch on as off when no row has a suggestion', async () => {
+    const rows = [wholeFoods(null), { ...safeway, suggestion: null }]
+    vi.stubEnv('CATEGORY_SUGGESTIONS', 'on')
+    const on = (await spentRows(rows)).map((r) => [r.label, r.amount])
+    vi.stubEnv('CATEGORY_SUGGESTIONS', undefined)
+    const off = (await spentRows(rows)).map((r) => [r.label, r.amount])
+    expect(on).toContainEqual(['Food & Drink', 72])
+    expect(on).toEqual(off)
+  })
+
+  // Spec §7.4's coverage guard: every transactions read the page resolves carries the embed.
+  it.each(['spent', 'saved'])('selects each transaction\'s suggestion on %s', async (metric) => {
+    results.categories = { data: [FOOD, GROCERY], error: null }
+    results.transactions = { data: [wholeFoods(null)], error: null }
+    await render(metric)
+    expect(selects.transactions?.length).toBeGreaterThan(0)
+    for (const cols of selects.transactions) expect(cols).toContain('category_suggestions(')
   })
 
   // A failed rules read rendered as "no rules" would quietly move every learned label back (#46).

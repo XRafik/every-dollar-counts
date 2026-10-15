@@ -3,7 +3,7 @@ import { lastCompleteMonths } from '@/lib/budget'
 import { trendsView } from '@/lib/trends'
 import { todayIn } from '@/lib/clock'
 import { householdTimezone } from '@/lib/household'
-import { fetchCategoryContext } from '@/lib/category-context'
+import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/category-context'
 import { buildSpendContext } from '@/lib/spend-context'
 import { SpendByCategoryChart } from '@/components/SpendByCategoryChart'
 import { PeriodOverPeriodChart } from '@/components/PeriodOverPeriodChart'
@@ -36,7 +36,7 @@ export default async function TrendsPage() {
   const { data: txns, error: txnsError } = await readAllRows(() =>
     supabase
       .from('transactions')
-      .select('id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount')
+      .select(`id, amount, date, merchant_name, user_category, pfc_primary, pfc_detailed, reimbursable_amount, ${SUGGESTION_EMBED}`)
       .eq('removed', false)
       .gte('date', windows.previous.from)
       .lte('date', windows.current.to)
@@ -46,7 +46,7 @@ export default async function TrendsPage() {
 
   // The reimbursable map is built straight from this page's own transaction rows — see
   // buildSpendContext.
-  const list = txns ?? []
+  const list = withSuggestion(txns ?? [])
   const ctx = buildSpendContext({ data, txns: list })
   const view = trendsView(windows, list, ctx)
 

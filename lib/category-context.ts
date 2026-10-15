@@ -1,9 +1,32 @@
 import 'server-only'
 import { cache } from 'react'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from './supabase/server'
+import { supabaseAdmin } from './supabase/admin'
 import { readAllById, readAllRows } from './read-all'
-import type { CategorizableTxn, CategoryData, CategoryRule } from './category-rules'
+import type { CategorizableTxn, CategoryData, CategoryRule, SuggestionRef } from './category-rules'
 import type { Category } from './categories'
+
+// Spec §14.7: CATEGORY_SUGGESTIONS=on switches Jev's suggestions on, for both the job and every
+// page. Anything else, or unset, is off, which is also the rollback. The only reader of the variable.
+export function suggestionsEnabled(): boolean {
+  return process.env.CATEGORY_SUGGESTIONS === 'on'
+}
+
+// The row's suggestion (spec §14.3), embedded in a transactions select so a page makes no extra
+// request. Every transactions select whose rows reach resolveCategory appends it.
+export const SUGGESTION_EMBED = 'suggestion:category_suggestions(category_id, confidence, catalog_fingerprint)'
+
+// Every page's rows go through this once, straight after the read. Without generated database
+// types, supabase-js types every embed as an array, but category_suggestions' primary key is
+// transaction_id, so PostgREST returns this one as an object or null (resolveCategory ignores an
+// array anyway). It retypes only `suggestion`; every other column keeps its inferred type, and a
+// select that drops the embed has no `suggestion` and fails here, so §7.4's tsc guard still holds.
+export function withSuggestion<T extends { suggestion: unknown }>(
+  rows: T[]
+): (Omit<T, 'suggestion'> & { suggestion: SuggestionRef | null })[] {
+  return rows as (Omit<T, 'suggestion'> & { suggestion: SuggestionRef | null })[]
+}
 
 // The ONE read of the household's categories and category rules (#28 spec §7.1). Every money page
 // and Settings goes through it; tripwire 4 holds every other `.from('categories')` and
@@ -15,14 +38,26 @@ import type { Category } from './categories'
 // learned label across the app, which is #46's failure in a new place. Money pages let it reach
 // app/(app)/error.tsx; Settings catches it so Banks stays usable.
 export const fetchCategoryContext = cache(async (): Promise<CategoryData> => {
-  const supabase = await createClient()
+  return readCategoryData(await createClient(), null)
+})
+
+// The same read for a job with no session (the suggestion job, spec §14.5): the service-role client
+// bypasses RLS, so both reads are scoped to the household by hand. The same throws.
+export async function fetchCategoryDataForHousehold(householdId: string): Promise<CategoryData> {
+  return readCategoryData(supabaseAdmin, householdId)
+}
+
+// `householdId` null means "whatever RLS lets this session see", which is one household.
+async function readCategoryData(supabase: SupabaseClient, householdId: string | null): Promise<CategoryData> {
+  const catQuery = supabase.from('categories').select('id, name, pfc_primary, sort_order')
   const [cats, rules] = await Promise.all([
-    supabase.from('categories').select('id, name, pfc_primary, sort_order').order('sort_order'),
-    readAllById(() =>
-      supabase
+    (householdId === null ? catQuery : catQuery.eq('household_id', householdId)).order('sort_order'),
+    readAllById(() => {
+      const q = supabase
         .from('category_rules')
         .select('id, household_id, merchant_key, merchant_label, category_id, origin')
-    ),
+      return householdId === null ? q : q.eq('household_id', householdId)
+    }),
   ])
   if (cats.error) throw new Error(`could not read categories: ${withCode(cats.error)}`)
   // Neither data nor error (an empty body) is a failed read, not "no categories" (readAllById
@@ -34,9 +69,14 @@ export const fetchCategoryContext = cache(async (): Promise<CategoryData> => {
         '(has db/migrations/021, including its grants, been applied?)'
     )
   }
-  // The one place outside lib/category-rules.ts that brands CategoryData.
-  return { categories: cats.data as Category[], rules: rules.data as CategoryRule[] } as CategoryData
-})
+  // The one place outside lib/category-rules.ts that brands CategoryData. The cast means tsc does
+  // not check these fields, so suggestionsOn is set here explicitly and tested.
+  return {
+    categories: cats.data as Category[],
+    rules: rules.data as CategoryRule[],
+    suggestionsOn: suggestionsEnabled(),
+  } as CategoryData
+}
 
 // "42501 permission denied", or just the message when there is no code.
 function withCode(error: { message: string; code?: string }): string {
@@ -52,9 +92,9 @@ export async function readTransactionsForCounts(): Promise<CountTxn[]> {
   const { data, error } = await readAllRows(() =>
     supabase
       .from('transactions')
-      .select('id, date, merchant_name, user_category, pfc_primary, pfc_detailed')
+      .select(`id, date, merchant_name, user_category, pfc_primary, pfc_detailed, ${SUGGESTION_EMBED}`)
       .eq('removed', false)
   )
   if (error) throw new Error(`could not read transactions: ${withCode(error)}`)
-  return data
+  return withSuggestion(data)
 }
