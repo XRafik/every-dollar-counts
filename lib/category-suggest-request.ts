@@ -32,7 +32,7 @@ type SentTransaction = {
   amount_usd: number
   direction: 'out' | 'in'
   date: string
-  bank_category: string | null
+  bank_category: string
 }
 
 function spendingNames(data: CategoryData): Map<string, string> {
@@ -90,7 +90,7 @@ export function householdExamples(data: CategoryData, picks: PickRow[]): Example
 }
 
 // One request for up to BATCH_SIZE rows: the examples once, then one Choice per row keyed by the
-// row's id. Plaid's sign convention is positive = money out.
+// row's id. Plaid's sign convention is positive = money out, so only a positive amount is 'out'.
 export function buildBatchRequest(
   rows: SuggestRow[],
   options: Record<string, string | null>,
@@ -107,9 +107,9 @@ export function buildBatchRequest(
       merchant: r.merchant_name ?? r.name,
       bank_description: r.name,
       amount_usd: Math.abs(r.amount),
-      direction: r.amount >= 0 ? 'out' : 'in',
+      direction: r.amount > 0 ? 'out' : 'in',
       date: r.date,
-      bank_category: r.pfc_detailed ?? r.pfc_primary,
+      bank_category: r.pfc_detailed ?? r.pfc_primary ?? 'UNKNOWN',
     })
   )
   const questions: Record<string, ChoiceQuestion> = {}

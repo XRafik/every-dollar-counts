@@ -102,9 +102,17 @@ describe('askChoices: retries', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(sleep).not.toHaveBeenCalled()
     expect(e.status).toBe(status)
-    expect(e.message).toContain(String(status))
-    expect(e.message).toContain('x'.repeat(200))
-    expect(e.message).not.toContain('x'.repeat(201))
+    expect(e.message).toBe(`TypeSafe request failed: ${status}`)
+  })
+
+  it("keeps TypeSafe's error body out of the message: a 422 can echo a merchant", async () => {
+    const fetch = vi.fn(async () =>
+      json({ error: 'invalid field state.transactions[0].merchant: SECRET-MERCHANT' }, 422)
+    )
+    const e = await rejection(askChoices(req, { fetch, sleep: noSleep() }))
+    expect(e.status).toBe(422)
+    expect(e.message).toBe('TypeSafe request failed: 422')
+    expect(e.message).not.toContain('SECRET-MERCHANT')
   })
 
   it('wraps a network failure without retrying', async () => {

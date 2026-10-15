@@ -96,6 +96,14 @@ describe('buildBatchRequest', () => {
     ])
     expect(JSON.stringify(req.state)).not.toContain('t1')
   })
+  it("sends bank_category 'UNKNOWN' when both PFCs are null", () => {
+    const req = buildBatchRequest([row({ pfc_primary: null, pfc_detailed: null })], opts, [])
+    expect(req.state.transactions[0].bank_category).toBe('UNKNOWN')
+  })
+  it("calls a zero amount 'in'", () => {
+    const req = buildBatchRequest([row({ amount: 0 })], opts, [])
+    expect(req.state.transactions[0].direction).toBe('in')
+  })
   it('carries the examples in state', () => {
     const ex = [{ merchant: 'Giant', filed_as: 'Grocery' }]
     expect(buildBatchRequest([row()], opts, ex).state.household_examples).toEqual(ex)

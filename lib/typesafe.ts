@@ -4,8 +4,8 @@ import 'server-only'
 // Plain fetch, no SDK. Retries 429 and 529 (and nothing else) up to three times with backoff.
 //
 // This module NEVER logs: callers log. The request body holds transaction details, so it must not
-// reach a log line or an error message. Errors carry the status and, for a non-2xx response, at
-// most the first 200 characters of TypeSafe's own error text.
+// reach a log line or an error message. Errors carry the status only, never TypeSafe's response
+// body, which can echo request content (a 422 names the offending field).
 import type { ChoiceQuestion } from './category-suggest-request'
 
 const ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
@@ -13,7 +13,6 @@ const MODEL = 'jev-latest'
 const TIMEOUT_MS = 15_000
 const RETRY_STATUSES = new Set([429, 529])
 const RETRY_DELAYS_MS = [500, 1000, 2000] // so 4 attempts in all
-const ERROR_TEXT_MAX = 200
 
 export type ChoiceAnswer = { type: 'choice'; choice: string; probabilities: Record<string, number>; confidence: number }
 export type ChoicesResult = {
@@ -65,8 +64,9 @@ export async function askChoices(
       continue
     }
     if (!res.ok) {
-      const detail = (await res.text().catch(() => '')).slice(0, ERROR_TEXT_MAX)
-      throw new TypeSafeError(`TypeSafe ${res.status}: ${detail}`, res.status)
+      // Status only, never the body: a 422 details the offending field and can echo a merchant.
+      await res.body?.cancel().catch(() => {})
+      throw new TypeSafeError(`TypeSafe request failed: ${res.status}`, res.status)
     }
 
     let parsed: unknown
