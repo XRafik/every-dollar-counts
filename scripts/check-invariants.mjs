@@ -341,6 +341,26 @@ export function checkUserCategoryWrites(files) {
   return out
 }
 
+// Jev's suggestions (#28 spec §14.9) have one writer, the job in lib/category-suggest.ts, which
+// stamps every row with the catalogue fingerprint and the model. A write from anywhere else could
+// store a suggestion no gate checked; reads are free, since every page embeds them.
+const SUGGESTION_WRITER = 'lib/category-suggest.ts'
+
+export function checkSuggestionWrites(files) {
+  const out = []
+  for (const { path, text } of files) {
+    if (path === SUGGESTION_WRITER) continue
+    const { text: commentFree, code } = views(text)
+    for (const at of findAll(/\.from\(\s*(['"])category_suggestions\1\s*\)/g, commentFree)) {
+      const calls = chainAfter(code, commentFree, at)
+      if (!calls.some((c) => /^(insert|upsert|update|delete)$/.test(c.name))) continue
+      out.push({ check: 'suggestion-write', file: path, line: lineOf(text, at), message:
+        'writes category_suggestions outside lib/category-suggest.ts, the one writer (#28 spec §14.9).' })
+    }
+  }
+  return out
+}
+
 export function checkBrandCasts(files) {
   const out = []
   for (const { path, text } of files) {
@@ -383,6 +403,7 @@ function main() {
     ...checkCategoryReads(files),
     ...checkRulesReads(files),
     ...checkUserCategoryWrites([...files, ...scripts]),
+    ...checkSuggestionWrites([...files, ...scripts]),
     ...checkBrandCasts(files),
   ]
   if (failures.length) {
