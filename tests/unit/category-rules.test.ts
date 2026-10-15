@@ -320,6 +320,12 @@ describe('resolveCategory step 5: suggestions', () => {
     const row = wholeFoods([sug(GROCERY.id, 0.99, FP)] as unknown as SuggestionRef)
     expect(resolveCategory(row, ctx()).source).toBe('bank')
   })
+  it('ignores an array even when it carries a suggestion\'s fields (the Array.isArray guard alone)', () => {
+    // The plain array above is also refused by `s.category_id`; this one passes every other test,
+    // so only the Array.isArray guard keeps it out.
+    const arr = Object.assign([sug(GROCERY.id, 0.99, FP)], sug(GROCERY.id, 0.99, FP))
+    expect(resolveCategory(wholeFoods(arr as unknown as SuggestionRef), ctx()).source).toBe('bank')
+  })
   it('changedBySuggestion is false when the suggestion agrees with the bank', () => {
     const fd = DEFAULTS.find((c) => c.name === 'Food & Drink')!
     const r = resolveCategory(wholeFoods(sug(fd.id, 0.99, FP)), ctx())
