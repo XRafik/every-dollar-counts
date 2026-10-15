@@ -7,6 +7,7 @@ import {
   merchantKey,
   type CategoryData,
   type CategoryRule,
+  type SuggestionRef,
 } from '@/lib/category-rules'
 import type { ReimbursableTxn } from '@/lib/reimbursements'
 
@@ -37,8 +38,18 @@ export function rule(merchant: string, categoryId: string, over: Partial<Categor
   }
 }
 
-export function testData(categories: Category[], rules: CategoryRule[] = []): CategoryData {
-  return { categories, rules } as CategoryData
+// suggestionsOn defaults to true so resolveCategory's suggestion step is exercised; a row with
+// `suggestion: null` is unaffected either way.
+export function testData(
+  categories: Category[],
+  rules: CategoryRule[] = [],
+  opts: { suggestionsOn?: boolean } = {}
+): CategoryData {
+  return { categories, rules, suggestionsOn: opts.suggestionsOn ?? true } as CategoryData
+}
+
+export function sug(categoryId: string | null, confidence: number, fingerprint: string): SuggestionRef {
+  return { category_id: categoryId, confidence, catalog_fingerprint: fingerprint }
 }
 
 export function testCtx(categories: Category[] = DEFAULTS, rules: CategoryRule[] = []) {

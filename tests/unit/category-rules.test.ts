@@ -7,19 +7,29 @@ import {
   resolveCategory,
   changedByRule,
   learnableRule,
+  catalogFingerprint,
+  contextFingerprint,
+  changedBySuggestion,
+  suggestableRow,
+  spendingCategories,
+  SUGGESTION_THRESHOLD,
   type CategorizableTxn,
   type CategoryContext,
   type CategoryData,
+  type CategoryRule,
+  type SuggestionRef,
 } from '@/lib/category-rules'
-import { DEFAULTS, GROCERY, HH, cat, rule, testCtx, testData } from './helpers/category-context'
+import { DEFAULTS, GROCERY, HH, cat, rule, sug, testCtx, testData } from './helpers/category-context'
 
 // #28 spec §5.3: resolveCategory is the only code that turns a row into a category name. Pick, then
-// rule, then bank; card payments never take a rule; a rule never crosses spending/transfer/income.
+// rule, then suggestion, then bank; card payments never take a rule or a suggestion; neither ever
+// crosses spending/transfer/income.
 const row = (over: Partial<CategorizableTxn> = {}): CategorizableTxn => ({
   user_category: null,
   pfc_primary: 'FOOD_AND_DRINK',
   pfc_detailed: null,
   merchant_name: 'Safeway',
+  suggestion: null,
   ...over,
 })
 const without = (name: string) => DEFAULTS.filter((c) => c.name !== name)
@@ -256,5 +266,105 @@ describe('learnableRule', () => {
       }
     }
     expect(taught).toBeGreaterThan(0) // the property must not hold vacuously
+  })
+})
+
+// #28 spec §5.3 step 5 and §14.3: Jev's suggestion sits between the rule and the bank, applies only
+// when switched on, current, confident and same-kind, and never on a card payment.
+const FP = catalogFingerprint(DEFAULTS)
+const wholeFoods = (s: SuggestionRef | null, over: Partial<CategorizableTxn> = {}) =>
+  row({ pfc_detailed: 'FOOD_AND_DRINK_GROCERIES', merchant_name: 'Whole Foods', suggestion: s, ...over })
+
+describe('resolveCategory step 5: suggestions', () => {
+  const ctx = (opts: { suggestionsOn?: boolean } = {}, rules: CategoryRule[] = []) =>
+    buildCategoryContext(testData(DEFAULTS, rules, opts))
+
+  it('applies a current, confident, same-kind suggestion', () => {
+    expect(resolveCategory(wholeFoods(sug(GROCERY.id, 0.95, FP)), ctx())).toEqual(
+      { name: 'Grocery', source: 'suggestion', ruleId: null, bankName: 'Food & Drink' })
+  })
+  it('applies at exactly the threshold', () => {
+    expect(resolveCategory(wholeFoods(sug(GROCERY.id, SUGGESTION_THRESHOLD, FP)), ctx()).source).toBe('suggestion')
+  })
+  it('ignores one below the threshold', () => {
+    expect(resolveCategory(wholeFoods(sug(GROCERY.id, SUGGESTION_THRESHOLD - 0.01, FP)), ctx()).source).toBe('bank')
+  })
+  it('ignores a stale fingerprint', () => {
+    expect(resolveCategory(wholeFoods(sug(GROCERY.id, 0.99, 'old')), ctx()).source).toBe('bank')
+  })
+  it('ignores one whose category is gone', () => {
+    expect(resolveCategory(wholeFoods(sug('c-deleted', 0.99, FP)), ctx()).source).toBe('bank')
+  })
+  it('ignores every suggestion with the switch off', () => {
+    expect(resolveCategory(wholeFoods(sug(GROCERY.id, 0.99, FP)), ctx({ suggestionsOn: false })).source).toBe('bank')
+  })
+  it('resolves "none" (a null category) to the bank', () => {
+    expect(resolveCategory(wholeFoods(sug(null, 0.99, FP)), ctx()).source).toBe('bank')
+  })
+  it('a hand pick beats a suggestion', () => {
+    expect(resolveCategory(wholeFoods(sug(GROCERY.id, 0.99, FP), { user_category: 'Travel' }), ctx()).source).toBe('pick')
+  })
+  it('a rule beats a suggestion', () => {
+    const r = resolveCategory(wholeFoods(sug(GROCERY.id, 0.99, FP)), ctx({}, [rule('Whole Foods', cat('Shopping').id)]))
+    expect(r).toMatchObject({ source: 'rule', name: 'Shopping' })
+  })
+  it('never applies across kinds (a spending row suggested into Transfer Out)', () => {
+    const transferOut = DEFAULTS.find((c) => c.name === 'Transfer Out')!
+    expect(resolveCategory(wholeFoods(sug(transferOut.id, 0.99, FP)), ctx()).source).toBe('bank')
+  })
+  it('never applies to a card payment', () => {
+    const row = wholeFoods(sug(GROCERY.id, 0.99, FP), { pfc_primary: 'LOAN_PAYMENTS', pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' })
+    expect(resolveCategory(row, ctx()).source).toBe('bank')
+  })
+  it('tolerates an array-shaped embed by ignoring it (Review Focus 1)', () => {
+    const row = wholeFoods([sug(GROCERY.id, 0.99, FP)] as unknown as SuggestionRef)
+    expect(resolveCategory(row, ctx()).source).toBe('bank')
+  })
+  it('changedBySuggestion is false when the suggestion agrees with the bank', () => {
+    const fd = DEFAULTS.find((c) => c.name === 'Food & Drink')!
+    const r = resolveCategory(wholeFoods(sug(fd.id, 0.99, FP)), ctx())
+    expect(r.source).toBe('suggestion')
+    expect(changedBySuggestion(r)).toBe(false)
+  })
+  it('changedBySuggestion is true when the suggestion relabels the row, and false for a rule', () => {
+    expect(changedBySuggestion(resolveCategory(wholeFoods(sug(GROCERY.id, 0.99, FP)), ctx()))).toBe(true)
+    expect(changedBySuggestion(resolveCategory(row(), testCtx(DEFAULTS, [rule('Safeway', GROCERY.id)])))).toBe(false)
+  })
+
+  describe('catalogFingerprint', () => {
+    it('ignores order', () => expect(catalogFingerprint([...DEFAULTS].reverse())).toBe(FP))
+    it('changes on a rename', () =>
+      expect(catalogFingerprint(DEFAULTS.map((c) => (c === GROCERY ? { ...c, name: 'Groceries' } : c)))).not.toBe(FP))
+    it('changes on an add and on a delete', () => {
+      expect(catalogFingerprint([...DEFAULTS, cat('Pets')])).not.toBe(FP)
+      expect(catalogFingerprint(DEFAULTS.filter((c) => c !== GROCERY))).not.toBe(FP)
+    })
+    it('changes when a category changes kind (its pfc_primary)', () =>
+      expect(catalogFingerprint(DEFAULTS.map((c) => (c === GROCERY ? { ...c, pfc_primary: 'INCOME' } : c)))).not.toBe(FP))
+    it('contextFingerprint equals catalogFingerprint of the context categories', () =>
+      expect(contextFingerprint(ctx())).toBe(FP))
+  })
+
+  describe('suggestableRow', () => {
+    const k = buildKindContext(DEFAULTS)
+    it('admits an unpicked spending row', () => expect(suggestableRow(wholeFoods(null), k)).toBe(true))
+    it('refuses a picked row', () => expect(suggestableRow(wholeFoods(null, { user_category: 'Grocery' }), k)).toBe(false))
+    it('refuses a card payment', () =>
+      expect(suggestableRow(wholeFoods(null, { pfc_primary: 'LOAN_PAYMENTS', pfc_detailed: 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT' }), k)).toBe(false))
+    it('refuses transfers and income', () => {
+      expect(suggestableRow(wholeFoods(null, { pfc_primary: 'TRANSFER_OUT', pfc_detailed: null }), k)).toBe(false)
+      expect(suggestableRow(wholeFoods(null, { pfc_primary: 'INCOME', pfc_detailed: null }), k)).toBe(false)
+    })
+    it('refuses an unmapped transfer whose shown name is Uncategorized', () => {
+      const noTransferOut = buildKindContext(DEFAULTS.filter((c) => c.name !== 'Transfer Out'))
+      expect(suggestableRow(wholeFoods(null, { pfc_primary: 'TRANSFER_OUT', pfc_detailed: null }), noTransferOut)).toBe(false)
+    })
+  })
+
+  it('spendingCategories excludes income and transfer categories', () => {
+    const names = spendingCategories(DEFAULTS, buildKindContext(DEFAULTS)).map((c) => c.name)
+    expect(names).toContain('Grocery')
+    expect(names).not.toContain('Income')
+    expect(names).not.toContain('Transfer Out')
   })
 })

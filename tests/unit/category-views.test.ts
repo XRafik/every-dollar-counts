@@ -11,7 +11,7 @@ import { DEFAULTS, GROCERY, cat, rule, testData } from './helpers/category-conte
 // run the real functions against each other: a Breakdown row and the list it opens must add up.
 const r = (id: string, month: string, merchant_name: string | null, amount: number, pfc_primary: string | null, over: Record<string, unknown> = {}) => ({
   id, date: `${month}-10`, amount, merchant_name, user_category: null as string | null, pfc_primary,
-  pfc_detailed: null as string | null, reimbursable_amount: null as number | null, ...over,
+  pfc_detailed: null as string | null, reimbursable_amount: null as number | null, suggestion: null, ...over,
 })
 const ROWS = [
   r('a', '2026-08', 'Safeway', 50, 'FOOD_AND_DRINK'),

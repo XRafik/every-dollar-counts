@@ -10,7 +10,7 @@ const categories: Category[] = [
   { id: '3', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 2 },
   { id: '4', name: 'Reimbursable-ish custom', pfc_primary: null, sort_order: 3 },
 ]
-const bankRow = (pfc_primary: string) => ({ user_category: null, pfc_primary, pfc_detailed: null, merchant_name: null })
+const bankRow = (pfc_primary: string) => ({ user_category: null, pfc_primary, pfc_detailed: null, merchant_name: null, suggestion: null })
 
 describe('buildSpendContext', () => {
   // Ported from the pre-refactor suite (arguments now { data, txns }; the exclusion sets are
@@ -64,7 +64,7 @@ describe('buildSpendContext', () => {
       data: testData(DEFAULTS, [rule('Safeway', GROCERY.id)]),
       txns: [{ id: 't1', amount: 50, reimbursable_amount: 20 }],
     })
-    const safeway = { user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, merchant_name: 'Safeway' }
+    const safeway = { user_category: null, pfc_primary: 'FOOD_AND_DRINK', pfc_detailed: null, merchant_name: 'Safeway', suggestion: null }
     expect(resolveCategory(safeway, ctx).name).toBe('Grocery')
     expect(ctx.reimbursedByTxn).toEqual({ t1: 20 })
   })
