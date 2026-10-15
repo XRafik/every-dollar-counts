@@ -211,6 +211,34 @@ describe('TransactionRow learned marker (#28)', () => {
   })
 })
 
+describe('TransactionRow suggested marker (#28 §14.6)', () => {
+  const SUGGESTED: ResolvedCategory = { name: 'Grocery', source: 'suggestion', ruleId: null, bankName: 'Food & Drink' }
+  const marker = () => screen.queryByRole('img', { name: /suggested by Jev/ })
+
+  it('says Jev filed the row, and links nowhere', () => {
+    const { container } = renderRow({}, SUGGESTED)
+    const el = marker()!
+    expect(el.getAttribute('aria-label')).toBe('Grocery, suggested by Jev. Pick a category to change it.')
+    expect(el.getAttribute('title')).toBe(el.getAttribute('aria-label'))
+    expect(el.closest('a')).toBeNull()
+    expect(container.querySelectorAll('td')[2].querySelector('a')).toBeNull()
+    // Mirrors the learned marker's box, so the desktop row keeps its height.
+    expect(el.className).toMatch(/\bh-\[34px\]/)
+    expect(el.className).toContain('shrink-0')
+  })
+
+  it('shows nothing when the suggestion agrees with the bank', () => {
+    renderRow({}, { ...SUGGESTED, name: 'Food & Drink' })
+    expect(marker()).toBeNull()
+  })
+
+  it('a rule row shows the learned marker and no Jev marker', () => {
+    renderRow({}, LEARNED)
+    expect(marker()).toBeNull()
+    expect(screen.getByRole('link', { name: /learned from/ })).toBeTruthy()
+  })
+})
+
 // CategoryPicker keys its stale-alert reset on source as well as name, so the row must hand it the
 // source: a rule equal to the bank's category being removed changes the reason, not the name.
 describe('TransactionRow category source', () => {

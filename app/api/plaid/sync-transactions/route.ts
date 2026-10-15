@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { decrypt } from '@/lib/crypto'
@@ -7,6 +7,7 @@ import { storeAccounts, syncAndStore } from '@/lib/ingest'
 import { shouldSyncTransactions } from '@/lib/sync-policy'
 import { classifyPlaidError, plaidErrorCode } from '@/lib/plaid-errors'
 import { EnvMismatchError } from '@/lib/app-env'
+import { suggestCategories } from '@/lib/category-suggest'
 
 // A bank whose sync failed maps to one of these, and each is a different sentence on screen.
 const STATUS_FOR = {
@@ -103,6 +104,10 @@ export async function POST() {
       continue
     }
   }
+
+  // Jev suggestions (#28 spec §14.5), once the response is sent. Never reaches this response,
+  // its status or any bank's health: suggestCategories does not throw, and the catch is a backstop.
+  after(() => suggestCategories(household_id).catch((e) => console.error('[suggest] failed', household_id, e instanceof Error ? e.message : String(e))))
 
   return NextResponse.json({
     ok: true,

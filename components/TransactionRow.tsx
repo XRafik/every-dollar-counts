@@ -1,9 +1,10 @@
 import { isCardPaymentRow } from '@/lib/categories'
-import { changedByRule, type ResolvedCategory } from '@/lib/category-rules'
+import { changedByRule, changedBySuggestion, type ResolvedCategory } from '@/lib/category-rules'
 import { money } from '@/lib/format'
 import { presentTransaction, TONE_CLASS } from '@/lib/transaction-presentation'
 import { CategoryPicker } from './CategoryPicker'
 import { LearnedMarker } from './LearnedMarker'
+import { SuggestedMarker } from './SuggestedMarker'
 import { ReimbursableCheckbox } from './ReimbursableCheckbox'
 import { ReimbursableEditor } from './ReimbursableEditor'
 
@@ -76,7 +77,9 @@ export function TransactionRow({
                 label={label}
               />
             </span>
+            {/* At most one: a row's category has one source. */}
             {changedByRule(category) && <LearnedMarker category={category.name} merchant={t.merchant_name} />}
+            {changedBySuggestion(category) && <SuggestedMarker category={category.name} />}
           </span>
         )}
       </td>

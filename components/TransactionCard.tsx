@@ -3,14 +3,15 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { isCardPaymentRow } from '@/lib/categories'
-import { changedByRule, type ResolvedCategory } from '@/lib/category-rules'
+import { changedByRule, changedBySuggestion, type ResolvedCategory } from '@/lib/category-rules'
 import { money, shortDate } from '@/lib/format'
 import { presentTransaction, TONE_CLASS } from '@/lib/transaction-presentation'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
 import { CategoryPicker } from '@/components/CategoryPicker'
 import { learnedText } from '@/components/LearnedMarker'
-import { LearnedIcon } from '@/components/ui/icons'
+import { suggestedText } from '@/components/SuggestedMarker'
+import { LearnedIcon, SuggestedIcon } from '@/components/ui/icons'
 import { ReimbursableCheckbox } from '@/components/ReimbursableCheckbox'
 import { ReimbursableEditor } from '@/components/ReimbursableEditor'
 
@@ -75,6 +76,8 @@ export function TransactionCard({
   const categoryLabel = cardPayment ? (t.user_category ?? 'Card payment') : category.name
   // A merchant rule relabelled this row (#28 spec §8.1). Never on a card payment: it takes no rule.
   const learned = !cardPayment && changedByRule(category)
+  // Jev's suggestion relabelled this row (#28 spec §14.6). Never on a card payment, as above.
+  const suggested = !cardPayment && changedBySuggestion(category)
   const merchant = t.merchant_name?.trim() || 'this merchant'
   const shareLabel = shareAmount !== null ? `, your share ${money(shareAmount)}` : ''
 
@@ -90,7 +93,7 @@ export function TransactionCard({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        aria-label={`${name}, ${categoryLabel}${learned ? `, learned from ${merchant}` : ''}, ${money(display)}${shareLabel} — edit`}
+        aria-label={`${name}, ${categoryLabel}${learned ? `, learned from ${merchant}` : ''}${suggested ? ', suggested by Jev' : ''}, ${money(display)}${shareLabel} — edit`}
         className="flex w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2"
       >
         <span className="min-w-0 flex-1">
@@ -99,6 +102,7 @@ export function TransactionCard({
             {t.date} · {categoryLabel}
             {/* An icon only: a link inside this <button> is invalid HTML. The aria-label above says it. */}
             {learned && <LearnedIcon className="ml-1 inline-block h-3 w-3 align-[-1px] text-faint" />}
+            {suggested && <SuggestedIcon className="ml-1 inline-block h-3 w-3 align-[-1px] text-faint" />}
             {shareAmount !== null && ` · your share ${money(shareAmount)}`}
           </span>
         </span>
@@ -193,6 +197,13 @@ export function TransactionCard({
                           </>
                         )}
                       </span>
+                    </p>
+                  )}
+                  {/* No link: a suggestion has no settings of its own; the picker above overrides it. */}
+                  {suggested && (
+                    <p className="flex items-center gap-1.5 text-xs text-muted" title={suggestedText(category.name)}>
+                      <SuggestedIcon className="h-3.5 w-3.5 shrink-0" />
+                      <span>Suggested by Jev.</span>
                     </p>
                   )}
                 </>

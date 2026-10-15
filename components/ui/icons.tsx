@@ -159,3 +159,13 @@ export const LearnedIcon = ({ className }: IconProps) => (
     <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
   </Svg>
 )
+
+// "Filed by Jev's suggestion" (#28 spec §14.6): a sparkle with a plus and a dot, so it reads as
+// something other than LearnedIcon's paired sparks at the same 12-14px.
+export const SuggestedIcon = ({ className }: IconProps) => (
+  <Svg className={className}>
+    <path d="M10 6l1.7 4.3L16 12l-4.3 1.7L10 18l-1.7-4.3L4 12l4.3-1.7z" />
+    <path d="M18 3v4M16 5h4" />
+    <circle cx="19" cy="19" r="1.15" fill="currentColor" stroke="none" />
+  </Svg>
+)

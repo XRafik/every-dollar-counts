@@ -22,6 +22,7 @@ type CategorySettings = {
   usage: CategoryUsage
   rules: RuleView[]
   ruleCategories: RuleCategory[]
+  suggestedCount: number | null // null while suggestions are off (spec §14.7): no Jev line
 }
 
 type Supabase = Awaited<ReturnType<typeof createClient>>
@@ -66,6 +67,7 @@ async function loadCategorySettings(supabase: Supabase): Promise<CategorySetting
       ...counts.rules[r.id],
     })),
     ruleCategories: data.categories.map((c) => ({ id: c.id, name: c.name, kind: kindOf(c.name, ctx) })),
+    suggestedCount: data.suggestionsOn ? counts.suggested : null,
   }
 }
 
@@ -159,7 +161,11 @@ export default async function SettingsPage() {
       <Card id="category-rules" className="scroll-mt-20 md:scroll-mt-6 p-5 space-y-3">
         <h2 className="text-base font-semibold text-ink">Category rules</h2>
         {categorySettings ? (
-          <CategoryRulesCard rules={categorySettings.rules} categories={categorySettings.ruleCategories} />
+          <CategoryRulesCard
+            rules={categorySettings.rules}
+            categories={categorySettings.ruleCategories}
+            suggestedCount={categorySettings.suggestedCount}
+          />
         ) : (
           categoriesUnavailable
         )}
