@@ -19,7 +19,8 @@ import {
 // `suggestion:category_suggestions(category_id, confidence, catalog_fingerprint)`.
 export type SuggestionRef = { category_id: string | null; confidence: number; catalog_fingerprint: string }
 
-// Provisional until §14.8's launch check; the owner picks the final value from its report.
+// Picked by the owner from §14.8's launch check (2026-10-15): on held-out hand picks, every answer at
+// or above it that differed from the bank matched the pick.
 export const SUGGESTION_THRESHOLD = 0.9
 
 // All five REQUIRED, so a page whose select drops one fails tsc instead of resolving wrongly.

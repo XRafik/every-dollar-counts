@@ -966,7 +966,7 @@ grant select, insert, update, delete on table public.category_suggestions to ser
 
 ### 14.7 The switch
 
-`CATEGORY_SUGGESTIONS=on` (server env, unset means off) enables both the job (§14.5 step 2) and §5.3 step 5. Turning it off stops new calls **and** makes every page ignore stored suggestions on the next load, so it is the rollback. It starts off in production and is turned on only after §14.8.
+`CATEGORY_SUGGESTIONS=on` (server env, unset means off) enables both the job (§14.5 step 1) and §5.3 step 5. Turning it off stops new calls **and** makes every page ignore stored suggestions on the next load, so it is the rollback. It starts off in production and is turned on only after §14.8.
 
 ### 14.8 Launch check
 
@@ -977,7 +977,14 @@ Before the switch is turned on, a check run against production through the job's
 - the rows that would change at 0.80, 0.90 and 0.95 of the Choice answer's `confidence` field, so the owner picks the threshold;
 - tokens per row and latency.
 
-The threshold the owner picks becomes `SUGGESTION_THRESHOLD` in `lib/category-rules.ts`, which client code can import. It is a provisional 0.9 until then. Then the switch goes on, and Spent, Income and Saved are compared before and after, as §10.2 step 4 does for rules.
+The threshold the owner picks becomes `SUGGESTION_THRESHOLD` in `lib/category-rules.ts`, which client code can import. Then the switch goes on, and Spent, Income and Saved are compared before and after, as §10.2 step 4 does for rules.
+
+**Result, 2026-10-15** (jev-1.13.0, 88 calls, read-only). The owner picked **0.90**.
+- **Hand picks, each merchant held out:** 32/69 agree. Answers that differ from the bank's category and clear the threshold were all right: 31/31 at 0.80, 24/24 at 0.90, 14/14 at 0.95. Every confident miss was the bank's own category, so it would change nothing. These right answers come from only 3 merchants, so this shows no confidently wrong relabel was seen, not a rate.
+- **Unpicked sample** (the first run's 200 rows): 6 / 5 / 3 rows change at 0.80 / 0.90 / 0.95, every one inside spending. Spent and Income for August–October are identical with and without suggestions.
+- **Batched against single answers:** the same choice on 40/40 rows; confidence moves by 0.09 on average.
+- **Cost and speed:** about 500 input tokens per row; p50 168ms per batch of 20.
+- **Follow-up:** Costco, with two conflicting hand picks, was suggested as the newer pick at 0.95 (#157). The owner settles it with a pick, which makes a rule.
 
 ### 14.9 Testing
 
