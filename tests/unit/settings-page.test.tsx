@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/dashboard-page.test.tsx: the static page import
 // below is linked before this file's body runs, firing the mock factory.
@@ -11,7 +11,15 @@ const { results, switchState } = vi.hoisted(() => ({
 // method and resolves to whatever the test configured for that table.
 const chainFor = (table: string) => {
   const chain: Record<string, unknown> = {}
-  for (const m of ['select', 'order', 'eq', 'limit']) chain[m] = () => chain
+  // PostgREST sends a count only when the select asks for one, so the stub does too: without
+  // { count: 'exact' } the count comes back null, as in production. Otherwise dropping the option
+  // from the accounts read would still pass while every visit said "Couldn't check your accounts."
+  let countAsked = false
+  chain.select = (_columns?: string, options?: { count?: string }) => {
+    countAsked = options?.count === 'exact'
+    return chain
+  }
+  for (const m of ['order', 'eq', 'limit']) chain[m] = () => chain
   // readAllRows (lib/read-all.ts) asks for the rows after its cursor with .or(); there are none
   // past this fixture, so a continuation page is empty and the read ends.
   let afterCursor = false
@@ -21,10 +29,10 @@ const chainFor = (table: string) => {
   }
   chain.single = async () => results[table] ?? { data: null, error: null }
   chain.maybeSingle = async () => results[table] ?? { data: null, error: null }
-  chain.then = (resolve: (v: unknown) => unknown) =>
-    Promise.resolve(
-      afterCursor ? { data: [], error: null } : (results[table] ?? { data: [], error: null })
-    ).then(resolve)
+  chain.then = (resolve: (v: unknown) => unknown) => {
+    const reply = afterCursor ? { data: [], error: null } : (results[table] ?? { data: [], error: null })
+    return Promise.resolve('count' in reply && !countAsked ? { ...reply, count: null } : reply).then(resolve)
+  }
   return chain
 }
 
@@ -54,11 +62,12 @@ vi.mock('@/lib/category-context', async () => {
   }
 })
 // Settings also reads plaid_items/plaid_slot_ledger/manual_assets, all via the service-role
-// client (lib/supabase/admin) rather than the request-scoped one stubbed above. Stubbed out here
-// exactly like tests/unit/dashboard-page.test.tsx does for plaid-items and manual-assets, so the
-// page never makes a real network call — none of these three bear on the property under test.
-vi.mock('@/lib/plaid-items', () => ({ listItemsForHousehold: async () => [] }))
-vi.mock('@/lib/manual-assets', () => ({ listManualAssets: async () => [] }))
+// client (lib/supabase/admin) rather than the request-scoped one stubbed above. That client
+// answers from `results` too, so lib/plaid-items.ts and lib/manual-assets.ts run for real and a
+// failed read reaches the page as it would in production (#91). The slot count is stubbed out, so
+// the page never makes a real network call; lib/plaid-items.ts needs only plaidEnv from lib/plaid.
+vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: { from: (table: string) => chainFor(table) } }))
+vi.mock('@/lib/plaid', () => ({ plaidEnv: 'sandbox' }))
 vi.mock('@/lib/plaid-slots', () => ({ countSlotsUsed: async () => null, LIFETIME_SLOTS: 10 }))
 
 import SettingsPage from '@/app/(app)/settings/page'
@@ -66,6 +75,9 @@ import { TimezoneCard } from '@/components/TimezoneCard'
 import { CategoryManager } from '@/components/CategoryManager'
 import { CategoryRulesCard } from '@/components/CategoryRulesCard'
 import { BankList } from '@/components/BankList'
+import { HomeValueCard } from '@/components/HomeValueCard'
+import { LinkButton } from '@/components/LinkButton'
+import { Card } from '@/components/ui/Card'
 import { txnRows } from '../stubs/postgrest-pages'
 import { catalogFingerprint } from '@/lib/category-rules'
 
@@ -115,6 +127,26 @@ function flatText(node: unknown): string {
   return flatText((node as { props?: { children?: unknown } }).props?.children)
 }
 
+// The <Card> headed `title`, so an assertion is about that card rather than the whole page.
+function card(node: unknown, title: string): unknown {
+  if (node == null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = card(child, title)
+      if (found) return found
+    }
+    return null
+  }
+  const el = node as { type?: unknown; props?: { children?: unknown } }
+  const kids = el.props?.children
+  const headed = (Array.isArray(kids) ? kids : [kids]).some((k) => {
+    const h = k as { type?: unknown; props?: { children?: unknown } } | null
+    return h?.type === 'h2' && flatText(h.props?.children) === title
+  })
+  if (el.type === Card && headed) return el
+  return el.props && 'children' in el.props ? card(kids, title) : null
+}
+
 beforeEach(() => {
   results.households = {
     data: [{ id: 'hh-1', name: 'Test Household', timezone: 'America/Los_Angeles' }],
@@ -128,7 +160,104 @@ beforeEach(() => {
   results.category_rules = { data: [], error: null }
   results.transactions = { data: [], error: null }
   results.budgets = { data: [], error: null }
+  results.manual_assets = { data: [], error: null }
+  results.plaid_items = { data: [], error: null }
   switchState.suggestionsOn = true
+})
+
+// A console.error spy left behind by a failing test would hand its calls to the next test's spy.
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+// Settings is the only place a bank can be reconnected (spec §7.3), so it catches a failed read per
+// card, as it does for categories below. A card whose read failed says so; it never shows "none"
+// in place of what it could not read (#46, #91).
+describe('Settings: a failed read says so in its own card (#91)', () => {
+  // Rendered as no assets, a failed read showed the home value as never entered.
+  it('says the home value could not be loaded, and still renders the rest of the page', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    results.manual_assets = { data: null, error: { message: 'boom' } }
+    const tree = await SettingsPage()
+    const home = card(tree, 'Home value')
+    expect(alertText(home)).toBe("Couldn't load your home value. Try again.")
+    expect(findProps(home, 'a')).toMatchObject({ href: '/settings' })
+    expect(findProps(tree, HomeValueCard)).toBeNull()
+    expect(findProps(tree, BankList)).not.toBeNull()
+    expect(findProps(tree, CategoryManager)).not.toBeNull()
+    expect(log).toHaveBeenCalledWith('[settings] could not load the home value', new Error('could not read manual assets: boom'))
+  })
+
+  it('hands the Home value card the stored value when the read succeeds', async () => {
+    results.manual_assets = {
+      data: [{ id: 'a1', name: 'Home', value: 750000, updated_at: '2026-10-01T12:00:00Z' }],
+      error: null,
+    }
+    const tree = await SettingsPage()
+    expect(findProps(tree, HomeValueCard)).toEqual({ initialValue: 750000, updatedAt: '2026-10-01T12:00:00Z' })
+    expect(alertText(card(tree, 'Home value'))).toBeNull()
+  })
+
+  // Rendered as no banks, a failed read said "No banks connected yet." beside Connect a bank: an
+  // invitation to relink a bank that is still connected, which spends one of ten lifetime
+  // connections (#51). Connect a bank goes too, since its own warning points at "the list above".
+  it('says the banks could not be loaded, offers no new connection, and still renders the rest of the page', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    results.plaid_items = { data: null, error: { message: 'boom' } }
+    const tree = await SettingsPage()
+    const banks = card(tree, 'Banks')
+    expect(alertText(banks)).toBe("Couldn't load your banks. Try again.")
+    expect(findProps(tree, BankList)).toBeNull()
+    expect(findProps(banks, LinkButton)).toBeNull()
+    expect(findProps(tree, HomeValueCard)).not.toBeNull()
+    expect(findProps(tree, CategoryManager)).not.toBeNull()
+    expect(log).toHaveBeenCalledWith('[settings] could not load the banks', new Error('could not read linked banks: boom'))
+  })
+
+  it('lists the banks, and offers Connect a bank, when the read succeeds', async () => {
+    const item = { id: 'item-1', institution_name: 'Capital One', status: 'ok', status_detail: null, products: ['transactions'], created_at: '2026-07-14T18:05:30Z' }
+    results.plaid_items = { data: [item], error: null }
+    const banks = card(await SettingsPage(), 'Banks')
+    expect(findProps(banks, BankList)).toMatchObject({ items: [item] })
+    expect(findProps(banks, LinkButton)).not.toBeNull()
+    expect(alertText(banks)).toBeNull()
+  })
+
+  // The count read printed "No banks connected yet." whenever it had no count, failed or not. Here
+  // the household has a bank, so that line would be a plain falsehood.
+  it.each([
+    ['fails', { data: null, error: { message: 'boom' }, count: null }, 'could not count accounts: boom'],
+    ['returns no count and no error', { data: null, error: null, count: null }, 'could not count accounts: read returned no count and no error'],
+  ])('says the accounts could not be checked when the count read %s', async (_name, reply, message) => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    results.accounts = reply as never
+    results.plaid_items = {
+      data: [{ id: 'item-1', institution_name: 'Capital One', status: 'ok', status_detail: null, products: ['transactions'], created_at: '2026-07-14T18:05:30Z' }],
+      error: null,
+    }
+    const banks = card(await SettingsPage(), 'Banks')
+    expect(alertText(banks)).toBe("Couldn't check your accounts. Try again.")
+    expect(flatText(banks)).not.toContain('No banks connected yet.')
+    expect(findProps(banks, BankList)).not.toBeNull()
+    expect(log).toHaveBeenCalledWith('[settings] could not load the account count', new Error(message))
+  })
+
+  it.each([
+    [0, 'No banks connected yet.'],
+    [3, '3 account(s) connected.'],
+  ])('says how many accounts are connected when the count is %i', async (count, line) => {
+    results.accounts = { data: null, error: null, count } as never
+    const banks = card(await SettingsPage(), 'Banks')
+    expect(flatText(banks)).toContain(line)
+    expect(alertText(banks)).toBeNull()
+  })
+
+  // The household read gates every card below it: unchecked, a read with neither rows nor an error
+  // rendered every card as if nothing were connected (#46).
+  it('throws when the household read returns no data and no error', async () => {
+    results.households = { data: null, error: null }
+    await expect(SettingsPage()).rejects.toThrow('could not read your household: read returned no data and no error')
+  })
 })
 
 describe('Settings timezone control', () => {
