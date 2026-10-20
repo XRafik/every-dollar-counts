@@ -8,6 +8,7 @@ import {
   isTemporaryError,
   isAlreadyRemoved,
   isOutOfItemSlots,
+  plaidRefused,
   type PlaidErrorCategory,
 } from '@/lib/plaid-errors'
 
@@ -112,6 +113,27 @@ describe('isReconnectError / isTemporaryError', () => {
   })
   it('is false for a bank-side action — a Reconnect button there just fails again', () => {
     expect(isReconnectError(plaidError('ITEM_LOCKED'))).toBe(false)
+  })
+})
+
+// The disconnect route's "nothing was changed" holds only when Plaid refused (#165).
+describe('plaidRefused', () => {
+  it('is true for a 4xx, which Plaid sends when it did nothing', () => {
+    expect(plaidRefused({ response: { status: 400, data: { error_code: 'INVALID_FIELD' } } })).toBe(true)
+    expect(plaidRefused({ response: { status: 429, data: { error_code: 'RATE_LIMIT' } } })).toBe(true)
+  })
+  // A 5xx, from Plaid or a gateway in front of it, can come after the call took effect.
+  it('is false for a 5xx, so the call may have landed', () => {
+    expect(plaidRefused({ response: { status: 500, data: { error_code: 'INTERNAL_SERVER_ERROR' } } })).toBe(false)
+    expect(plaidRefused({ response: { status: 502, data: '<html>Bad Gateway</html>' } })).toBe(false)
+    expect(plaidRefused({ response: { status: 504, data: '<html>Gateway Timeout</html>' } })).toBe(false)
+  })
+  it('is false when nothing answered, or the answer is not a refusal', () => {
+    expect(plaidRefused({ response: { status: 302, data: '' } })).toBe(false)
+    expect(plaidRefused({ message: 'socket hang up', code: 'ECONNRESET' })).toBe(false)
+    expect(plaidRefused(new Error('timeout of 0ms exceeded'))).toBe(false)
+    expect(plaidRefused(plaidError('ITEM_LOGIN_REQUIRED'))).toBe(false)
+    expect(plaidRefused(null)).toBe(false)
   })
 })
 

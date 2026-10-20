@@ -9,8 +9,10 @@ import {
   savePendingLink,
   clearPendingLink,
   completePendingLink,
+  type CompleteResult,
 } from '@/components/plaid-link-context'
 import { useIsStandalone } from '@/lib/useIsStandalone'
+import { SAVE_TIMEOUT_MS, sendRequest, type RequestOutcome } from '@/lib/save-response'
 
 // Two paths, because Plaid Link only lists institutions supporting EVERY requested product:
 // asking for transactions + investments at once would hide most banks AND most brokerages.
@@ -27,6 +29,11 @@ import { useIsStandalone } from '@/lib/useIsStandalone'
 // drift away from the message it describes.
 type LinkError = { message: string; slotAtRisk: boolean }
 
+// For an exchange whose reply was lost, timed out or could not be read (#165). The bank may well be
+// connected, so saying it failed would invite a second link: a duplicate that spends another of the
+// ten connections (#51). The slot warning beside it says to check the list first.
+const MAY_HAVE_CONNECTED = 'That bank may have connected. Showing the latest.'
+
 export function LinkButton() {
   const router = useRouter()
   // Link keeps the pending connection in localStorage (plaid-link-context). The installed iOS app
@@ -41,17 +48,25 @@ export function LinkButton() {
   const onSuccess = useCallback(
     async (public_token: string, metadata: { institution?: { name?: string } | null }) => {
       setBusy(true)
-      const result = await completePendingLink(public_token, metadata)
-      setBusy(false)
-      setToken(null)
-      if (!result.ok) {
+      let result: CompleteResult
+      try {
+        result = await completePendingLink(public_token, metadata)
+      } finally {
+        setBusy(false)
+        setToken(null)
+      }
+      if (result.outcome === 'failed') {
         // Loud on purpose: the Plaid connection already exists at this point, so a silent failure
         // invites a retry that spends another unrefundable slot.
         setError({ message: result.error, slotAtRisk: true })
         return
       }
-      setError(null)
-      setNotice(result.warning ?? null)
+      if (result.outcome === 'unknown') {
+        setError({ message: MAY_HAVE_CONNECTED, slotAtRisk: true })
+      } else {
+        setError(null)
+        setNotice(result.warning ?? null)
+      }
       router.refresh()
     },
     [router]
@@ -81,32 +96,38 @@ export function LinkButton() {
   const start = useCallback(async (products: string[]) => {
     setError(null)
     setNotice(null)
-    let body: { link_token?: string; error?: string } = {}
+    // The shared reply rules (lib/save-response.ts), and a save's timeout: a link token is free and
+    // an unused one expires, so giving up on a slow one costs nothing (#165). Busy while it is in
+    // flight, so a double tap sends one request.
+    setBusy(true)
+    let result: RequestOutcome
     try {
-      const res = await fetch('/api/plaid/create-link-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'add', products }),
-      })
-      body = await res.json().catch(() => ({}))
-      if (!res.ok || !body.link_token) {
-        // No link token means Link never opened, so no Item exists and no slot is at risk —
-        // including the environment guard's 409/500, which says "Nothing was connected."
-        setError({
-          message: body.error ?? "Couldn't start the connection. Please try again.",
-          slotAtRisk: false,
-        })
-        return
-      }
-    } catch {
+      result = await sendRequest(
+        '/api/plaid/create-link-token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: 'add', products }),
+        },
+        SAVE_TIMEOUT_MS
+      )
+    } finally {
+      setBusy(false)
+    }
+    const linkToken = result.outcome === 'answered' ? result.body.link_token : undefined
+    if (typeof linkToken !== 'string' || linkToken === '') {
+      // No link token means Link never opened, so no Item exists and no slot is at risk —
+      // including the environment guard's 409/500, which says "Nothing was connected." That holds
+      // for a reply that was lost too.
+      if (result.outcome === 'unknown') console.error('[LinkButton] link token request failed', result.cause)
       setError({
-        message: "Couldn't reach the app. Check your connection, then try again.",
+        message: result.outcome === 'refused' ? result.error : "Couldn't start the connection. Please try again.",
         slotAtRisk: false,
       })
       return
     }
-    savePendingLink({ token: body.link_token, mode: 'add', products })
-    setToken(body.link_token)
+    savePendingLink({ token: linkToken, mode: 'add', products })
+    setToken(linkToken)
   }, [])
 
   return (
@@ -135,7 +156,7 @@ export function LinkButton() {
         <p className="text-sm text-coral">
           {error.message}
           {error.slotAtRisk &&
-            ' Check the list above before trying again — every new attempt uses one of your ten bank connections permanently.'}
+            ' Check your banks in Settings before trying again — every new attempt uses one of your ten bank connections permanently.'}
         </p>
       )}
       {notice && <p className="text-sm text-muted">{notice}</p>}
