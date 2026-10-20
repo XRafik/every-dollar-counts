@@ -33,7 +33,8 @@ const chainFor = (table: string) => {
     calls.gte.push(v)
     return chain
   }
-  chain.single = async () => results[table] ?? { data: null, error: null }
+  // maybeSingle only. Null data and no error is its answer for no row; .single() makes no row an
+  // error (PGRST116), which a stand-in answering null would hide (#172).
   chain.maybeSingle = async () => results[table] ?? { data: null, error: null }
   chain.then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve(
@@ -45,9 +46,21 @@ const chainFor = (table: string) => {
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({ from: (table: string) => chainFor(table) }),
 }))
-// The service-role client answers from `results` too, so lib/manual-assets.ts runs for real and
-// its failed read reaches the page as it would in production (#91).
-vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: { from: (table: string) => chainFor(table) } }))
+// The service-role client answers from `results` too, so lib/manual-assets.ts and
+// lib/plaid-items.ts run for real and a failed read reaches the page as it would in production
+// (#91). plaid_items goes through the strict stand-in in tests/stubs/plaid-items.ts, which applies
+// the read's filters to the stored rows, so the banner shows only this household's banks (#135).
+vi.mock('@/lib/supabase/admin', async () => {
+  const { plaidItemsQuery } = await import('../stubs/plaid-items')
+  return {
+    supabaseAdmin: {
+      from: (table: string) =>
+        table === 'plaid_items' ? plaidItemsQuery(results.plaid_items ?? { data: [], error: null }) : chainFor(table),
+    },
+  }
+})
+// lib/plaid-items.ts needs only plaidEnv from lib/plaid.
+vi.mock('@/lib/plaid', () => ({ plaidEnv: 'sandbox' }))
 // Categories and rules come through lib/category-context.ts (#28), whose own test covers paging.
 // Built from `results.categories` / `results.category_rules`, so a failed categories read still
 // rejects with the page's message.
@@ -72,8 +85,9 @@ vi.mock('@/lib/category-context', async (importOriginal) => {
     },
   }
 })
-vi.mock('@/lib/household', () => ({
-  DEFAULT_TIMEZONE: 'America/New_York',
+// The real module but for the timezone, so currentHouseholdId reads `results.memberships`.
+vi.mock('@/lib/household', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/household')>()),
   householdTimezone: async () => tz.value,
 }))
 vi.mock('@/lib/receivable', () => ({ fetchReceivable: async () => 0 }))
@@ -81,8 +95,12 @@ vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value 
 
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
+import { NotSyncingBanner } from '@/components/NotSyncingBanner'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
+import { blocks, bannerText } from './helpers/banner'
+import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
 
 const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
 const GROCERY = { id: 'c-grocery', name: 'Grocery', pfc_primary: null, sort_order: 1 }
@@ -100,6 +118,7 @@ beforeEach(() => {
   results.category_rules = { data: [], error: null }
   results.transactions = { data: [], error: null }
   results.manual_assets = { data: [], error: null }
+  results.plaid_items = { data: [], error: null }
   for (const k of Object.keys(selects)) delete selects[k]
   vi.unstubAllEnvs()
 })
@@ -107,6 +126,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs()
 })
+
+const METRICS = ['net-worth', 'cash', 'spent', 'saved']
 
 describe('Breakdown reads', () => {
   // #91: this page exists to explain the net-worth figure, and rendered as no assets it explained
@@ -118,11 +139,64 @@ describe('Breakdown reads', () => {
 
   // Only net worth shows the house, so only net worth reads it. Now that a failed read throws (#91),
   // reading it for every metric would take down Cash, Spent and Saved over a value none of them shows.
-  it.each(['cash', 'spent', 'saved'])('still renders %s when the household and manual assets reads fail', async (metric) => {
+  it.each(['cash', 'spent', 'saved'])('still renders %s when the manual assets read fails', async (metric) => {
     vi.setSystemTime(new Date('2026-09-15T16:00:00Z'))
-    results.memberships = { data: null, error: { message: 'statement timeout' } }
     results.manual_assets = { data: null, error: { message: 'statement timeout' } }
     await expect(render(metric)).resolves.toBeTruthy()
+  })
+
+  // Every metric shows the "isn't syncing" banner, so every metric needs the household's banks
+  // (#135). Rendered as no banks, a failed read would show stale figures with no warning (#46), so
+  // it throws, as the dashboard does, and app/(app)/error.tsx offers a retry.
+  it.each(METRICS)('fails loudly on %s when the household read fails, rather than hiding the banner', async (metric) => {
+    vi.setSystemTime(new Date('2026-09-15T16:00:00Z'))
+    results.memberships = { data: null, error: { message: 'statement timeout' } }
+    await expect(render(metric)).rejects.toThrow(/could not read your household: statement timeout/)
+  })
+
+  it.each(METRICS)('fails loudly on %s when the banks read fails, rather than hiding the banner', async (metric) => {
+    vi.setSystemTime(new Date('2026-09-15T16:00:00Z'))
+    results.plaid_items = { data: null, error: { message: 'statement timeout' } }
+    await expect(render(metric)).rejects.toThrow(/could not read linked banks: statement timeout/)
+  })
+
+  // #172: an account with no membership, which sign-in lets through when it cannot check
+  // (lib/access.ts), has no household, so no banks, and on net worth no home value. Every metric
+  // renders, and reads neither: both reads are set to fail here, so reading one would throw.
+  it.each(METRICS)('renders %s for an account with no household, reading no banks', async (metric) => {
+    vi.setSystemTime(new Date('2026-09-15T16:00:00Z'))
+    results.memberships = { data: null, error: null }
+    results.plaid_items = { data: null, error: { message: 'read for no household' } }
+    results.manual_assets = { data: null, error: { message: 'read for no household' } }
+    expect(bannerText(await render(metric))).toBe('')
+  })
+})
+
+// The dashboard's banner, on the drill-downs its tiles link to (#135).
+describe('Breakdown banks (#135)', () => {
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-09-15T16:00:00Z'))
+  })
+
+  it.each(METRICS)("warns on %s that a bank isn't syncing, first, above the header", async (metric) => {
+    results.plaid_items = {
+      data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' }), ...FOREIGN_ITEMS],
+      error: null,
+    }
+    const tree = await render(metric)
+    expect(bannerText(tree)).toBe(
+      "Capital One isn't syncing — reconnect in Settings to resume. These figures may be out of date."
+    )
+    const order = blocks(tree).map((b) => b.type)
+    expect(order.indexOf(NotSyncingBanner)).toBe(0)
+    expect(order.indexOf(PageHeader)).toBe(1)
+  })
+
+  // Another household's broken bank, or this household's from the other Plaid environment, must
+  // not raise the banner here.
+  it.each(METRICS)("says nothing on %s while every one of the household's banks is syncing", async (metric) => {
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect(bannerText(await render(metric))).toBe('')
   })
 })
 
@@ -234,6 +308,32 @@ describe('Saved breakdown: average per month (#126)', () => {
     const tree = await render('saved')
     expect(lists(tree)).toHaveLength(1)
     expect(textOf(tree)).toMatch(reason)
+  })
+
+  // #135: August would be missing a broken bank's transactions from the day it broke, and still be
+  // averaged as a full month. So the average goes, and one line says why, where it would have been.
+  it("has no average while a bank isn't syncing, and says why in its place", async () => {
+    history.value = { kind: 'ready', month: '2026-05' }
+    results.plaid_items = { data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' })], error: null }
+    const tree = await render('saved')
+    expect(lists(tree)).toHaveLength(1)
+    expect(textOf(tree)).not.toMatch(/average saved/i)
+    const avgCard = blocks(tree).at(-1)!
+    expect(textOf(avgCard)).toBe("No average while Capital One isn't syncing.")
+  })
+
+  // This month's own money in and out still show: the banner above says they may be out of date.
+  it("still shows this month's money in and out while a bank isn't syncing", async () => {
+    history.value = { kind: 'ready', month: '2026-05' }
+    results.plaid_items = { data: [storedItem({ status: 'needs_reconnect' })], error: null }
+    expect(lists(await render('saved'))[0].rows.map((r) => r.label)).toEqual(['Money in (income)', 'Money out (spending)'])
+  })
+
+  // Only this household's banks count: a broken bank elsewhere leaves the average alone.
+  it("keeps the average when only another household's bank, or one from the other environment, is broken", async () => {
+    history.value = { kind: 'ready', month: '2026-05' }
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect(lists(await render('saved'))).toHaveLength(2)
   })
 })
 

@@ -20,3 +20,22 @@ export const householdTimezone = cache(async (): Promise<string> => {
   // one yet. The default is the honest answer.
   return (data?.timezone as string | null | undefined) ?? DEFAULT_TIMEZONE
 })
+
+// The signed-in person's household id, for the reads the service-role client makes on a page's
+// behalf (lib/plaid-items.ts), which RLS does not scope. Throws on a failed read: without the
+// household a page cannot ask which banks are syncing, and an empty answer would hide the "isn't
+// syncing" banner (#46, #135).
+//
+// Null for an account with no membership, which sign-in lets through when it cannot check
+// (lib/access.ts fails open). That account has no household and so no banks, which is the truth,
+// not a failed read. maybeSingle, not single: single makes no row an error (PGRST116), which put
+// such an account on the error page on every visit, with nothing a retry could fix.
+export async function currentHouseholdId(): Promise<string | null> {
+  const supabase = await createClient()
+  const { data, error } = await supabase.from('memberships').select('household_id').limit(1).maybeSingle()
+  if (error) {
+    const code = error.code ? `${error.code} ` : ''
+    throw new Error(`could not read your household: ${code}${error.message}`)
+  }
+  return (data?.household_id as string | undefined) ?? null
+}

@@ -2,10 +2,12 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { AccountList } from '@/components/AccountList'
 import { LinkButton } from '@/components/LinkButton'
+import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import { RefreshButton } from '@/components/RefreshButton'
 import { SpendIncomeChart } from '@/components/SpendIncomeChart'
 import { RecentActivity } from '@/components/RecentActivity'
 import { Card } from '@/components/ui/Card'
+import { buttonClass } from '@/components/ui/Button'
 import { StatCard } from '@/components/ui/StatCard'
 import { StatRows } from '@/components/ui/StatRows'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -22,12 +24,13 @@ import {
   sumManualAssets,
 } from '@/lib/dashboard'
 import { listItemsForHousehold } from '@/lib/plaid-items'
+import { balancesBlocked, balancesPending, bySync } from '@/lib/bank-state'
 import { listManualAssets } from '@/lib/manual-assets'
 import { budgetedSpend, spendByCategory, monthKey } from '@/lib/budget'
 import { buildSpendContext } from '@/lib/spend-context'
 import { fetchReceivable } from '@/lib/receivable'
 import { todayIn, hourIn } from '@/lib/clock'
-import { householdTimezone } from '@/lib/household'
+import { currentHouseholdId, householdTimezone } from '@/lib/household'
 import { readAllRows } from '@/lib/read-all'
 import { historyStart } from '@/lib/history-start'
 
@@ -58,19 +61,13 @@ export default async function DashboardPage({
 
   // Any bank that isn't syncing has to be visible on the main screen. Stale numbers that look
   // fine are the failure this whole migration exists to prevent.
-  const { data: membershipRow, error: membershipError } = await supabase
-    .from('memberships')
-    .select('household_id')
-    .limit(1)
-    .single()
-  // Without this, the banks list and the home value both silently vanish, and net worth quietly
-  // drops by the value of the house.
-  if (membershipError) throw new Error(`could not read your household: ${membershipError.message}`)
-  const items = membershipRow ? await listItemsForHousehold(membershipRow.household_id) : []
-  const manualAssets = membershipRow ? await listManualAssets(membershipRow.household_id) : []
+  // The household read throws when it fails: otherwise the banks list and the home value both
+  // silently vanish, and net worth quietly drops by the value of the house. Null is an account with
+  // no household, which has neither.
+  const householdId = await currentHouseholdId()
+  const items = householdId ? await listItemsForHousehold(householdId) : []
+  const manualAssets = householdId ? await listManualAssets(householdId) : []
   const home = manualAssets.find((a) => a.name === 'Home') ?? null
-  const unhealthy = items.filter((i) => i.status !== 'ok')
-  const needsReconnect = unhealthy.some((i) => i.status === 'needs_reconnect')
 
   // Two different questions, two different sources. `now` is an INSTANT, and homeStale below
   // measures elapsed milliseconds between two instants — correct in any zone. `today` and the
@@ -83,6 +80,51 @@ export default async function DashboardPage({
   const dateStr = longDate(today)
 
   if (accounts.length === 0) {
+    // Banks with no accounts yet are not "no banks" (#164). A bank whose first balance pull failed
+    // is kept, with a note to press Refresh, and Refresh pulls its balances: the sync route stores
+    // accounts for every bank it does not skip. Connect here would invite linking the same bank
+    // again, which spends one of ten lifetime connections (#51), so it is never offered.
+    //
+    // Only a bank that is syncing is promised its balances, with Refresh. One that isn't can't be
+    // counted on to send them (Refresh skips a broken login, and retries the rest without fixing
+    // what stopped them), so the card points to Settings for it instead. With both kinds, the card
+    // speaks for the syncing ones and the banner, first as always, for the rest.
+    if (items.length > 0) {
+      const { syncing, behind } = bySync(items)
+      return (
+        <div className="space-y-6">
+          <NotSyncingBanner items={items} />
+          <PageHeader title={greeting(hourIn(tz))} subtitle={dateStr} />
+          <Card className="p-8 text-center">
+            {syncing.length > 0 ? (
+              <>
+                <h2 className="text-lg font-semibold text-ink">Your balances are on their way</h2>
+                <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
+                  {balancesPending(syncing)} Press Refresh to fetch them.
+                </p>
+                <div className="mt-5 flex justify-center">
+                  <RefreshButton />
+                </div>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-semibold text-ink">
+                  {behind.length === 1 ? 'Your bank needs attention' : 'Your banks need attention'}
+                </h2>
+                <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
+                  {balancesBlocked(behind, { inSettings: true })}
+                </p>
+                <div className="mt-5 flex justify-center">
+                  <Link href="/settings" className={buttonClass('secondary', 'md')}>
+                    Go to Settings
+                  </Link>
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      )
+    }
     return (
       <div className="space-y-6">
         <PageHeader title={greeting(hourIn(tz))} subtitle={dateStr} />
@@ -144,7 +186,7 @@ export default async function DashboardPage({
   // so a partial fix could have had the label and the amount naming different months.
   const thisMonthLabel = monthNameLong(months[months.length - 1].key)
   const chartFlows = flows.slice(-6)
-  const avgSaved = savedAverage(flows, months[months.length - 1].key, await historyStart())
+  const avgSaved = savedAverage(flows, months[months.length - 1].key, await historyStart(), items)
 
   const { data: budgetRows, error: budgetsError } = await supabase
     .from('budgets')
@@ -193,7 +235,8 @@ export default async function DashboardPage({
     </span>
   )
   // No average line when there is no figure (the phone row shows money in and out instead):
-  // neither layout has room to say why, and the saved breakdown it links to does. The month count keeps a one- or two-month "average" from passing for a
+  // neither layout has room to say why, and the saved breakdown it links to does. That includes a
+  // bank that isn't syncing (#135), which the banner above names. The month count keeps a one- or two-month "average" from passing for a
   // settled one. Coral by the rounded figure, so a few cents below zero does not read as a red "$0".
   const avgLine =
     avgSaved.kind === 'average' ? (
@@ -210,19 +253,7 @@ export default async function DashboardPage({
         </div>
       )}
 
-      {unhealthy.length > 0 && (
-        <Link
-          href="/settings"
-          className="block rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral"
-        >
-          {unhealthy.length === 1
-            ? `${unhealthy[0].institution_name ?? 'A bank'} isn't syncing`
-            : `${unhealthy.length} banks aren't syncing`}
-          {needsReconnect
-            ? ' — reconnect in Settings to resume. These figures may be out of date.'
-            : ' — see Settings. These figures may be out of date.'}
-        </Link>
-      )}
+      <NotSyncingBanner items={items} />
 
       {homeStale && (
         <Link

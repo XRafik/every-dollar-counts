@@ -33,7 +33,8 @@ const chainFor = (table: string) => {
     afterCursor = true
     return chain
   }
-  chain.single = async () => results[table] ?? { data: null, error: null }
+  // maybeSingle only. Null data and no error is its answer for no row; .single() makes no row an
+  // error (PGRST116), which a stand-in answering null would hide (#172).
   chain.maybeSingle = async () => results[table] ?? { data: null, error: null }
   chain.then = (resolve: (v: unknown) => unknown) =>
     Promise.resolve(
@@ -50,8 +51,18 @@ vi.mock('@/lib/supabase/server', () => ({
 }))
 // The service-role client answers from `results` too, so lib/manual-assets.ts and
 // lib/plaid-items.ts run for real and a failed read reaches the page as it would in production
-// (#91). lib/plaid-items.ts needs only plaidEnv from lib/plaid.
-vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: { from: (table: string) => chainFor(table) } }))
+// (#91). plaid_items goes through the strict stand-in in tests/stubs/plaid-items.ts, which applies
+// the read's filters to the stored rows, so the banner shows only this household's banks (#135).
+// lib/plaid-items.ts needs only plaidEnv from lib/plaid.
+vi.mock('@/lib/supabase/admin', async () => {
+  const { plaidItemsQuery } = await import('../stubs/plaid-items')
+  return {
+    supabaseAdmin: {
+      from: (table: string) =>
+        table === 'plaid_items' ? plaidItemsQuery(results.plaid_items ?? { data: [], error: null }) : chainFor(table),
+    },
+  }
+})
 vi.mock('@/lib/plaid', () => ({ plaidEnv: 'sandbox' }))
 // Categories and rules come through lib/category-context.ts (#28), whose own test covers paging.
 // Built from `results.categories` / `results.category_rules`, so a failed categories read still
@@ -77,8 +88,10 @@ vi.mock('@/lib/category-context', async (importOriginal) => {
     },
   }
 })
-vi.mock('@/lib/household', () => ({
-  DEFAULT_TIMEZONE: 'America/New_York',
+// The real module but for the timezone, so currentHouseholdId reads `results.memberships` as the
+// saved breakdown it is compared with below does.
+vi.mock('@/lib/household', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/household')>()),
   householdTimezone: async () => tz.value,
 }))
 // The real module by default. Under `stampLabel` every label gets a prefix no local expression
@@ -99,9 +112,17 @@ vi.mock('@/lib/receivable', () => ({ fetchReceivable: async () => 0 }))
 vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value }))
 
 import { pagedTable } from '../stubs/postgrest-pages'
+import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
+import { blocks, bannerText } from './helpers/banner'
 import DashboardPage from '@/app/(app)/dashboard/page'
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
+import { NotSyncingBanner } from '@/components/NotSyncingBanner'
+import Link from 'next/link'
+import { RefreshButton } from '@/components/RefreshButton'
+import { LinkButton } from '@/components/LinkButton'
+import { Card } from '@/components/ui/Card'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { moneyWhole } from '@/lib/format'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
@@ -212,6 +233,180 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
+})
+
+describe('Dashboard banks (#135)', () => {
+  it("warns that a bank isn't syncing, first, above the header", async () => {
+    results.plaid_items = {
+      data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' }), ...FOREIGN_ITEMS],
+      error: null,
+    }
+    const tree = await render()
+    expect(bannerText(tree)).toBe(
+      "Capital One isn't syncing — reconnect in Settings to resume. These figures may be out of date."
+    )
+    const order = blocks(tree).map((b) => b.type)
+    expect(order.indexOf(NotSyncingBanner)).toBe(0)
+    expect(order.indexOf(NotSyncingBanner)).toBeLessThan(order.indexOf(PageHeader))
+  })
+
+  // Another household's broken bank, or this household's from the other Plaid environment, must
+  // not raise the banner here.
+  it('says nothing while every one of the household\'s banks is syncing', async () => {
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect(bannerText(await render())).toBe('')
+  })
+
+  // The OAuth return's one-time note stays first, as it was before the banner moved.
+  it('keeps the OAuth notice above the banner', async () => {
+    results.plaid_items = { data: [storedItem({ status: 'temporarily_unavailable' })], error: null }
+    const tree = await DashboardPage({ searchParams: Promise.resolve({ notice: 'Bank connected.' }) })
+    const order = blocks(tree)
+    expect(textOf(order[0]).trim()).toBe('Bank connected.')
+    expect(order[1].type).toBe(NotSyncingBanner)
+  })
+})
+
+// Whether `type` is rendered anywhere in the tree the page returned.
+function renders(node: unknown, type: unknown): boolean {
+  return findElement(node, type) !== null
+}
+
+// The first element of `type` in the tree, with the props the page gave it.
+function findElement(node: unknown, type: unknown): { props: Record<string, unknown> } | null {
+  if (node == null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const n of node) {
+      const found = findElement(n, type)
+      if (found) return found
+    }
+    return null
+  }
+  const el = node as { type?: unknown; props?: Record<string, unknown> }
+  if (el.type === type) return el as { props: Record<string, unknown> }
+  return el.props ? findElement(el.props.children, type) : null
+}
+
+// What the empty-state card says, its heading, line and button label in order, and the card.
+function emptyCard(tree: unknown): { text: string; card: unknown } {
+  const card = blocks(tree).find((b) => b.type === Card)
+  if (!card) throw new Error('the page rendered no card')
+  return { text: textOf(card).replace(/\s+/g, ' ').trim(), card }
+}
+
+// #164: the exchange route keeps a bank whose first balance pull failed, and says to press Refresh.
+// Until the balances arrive it has no accounts. Read as "no bank", the page offered Connect, which
+// would link the same bank again and spend one of ten lifetime connections (#51).
+describe('Dashboard before a bank\'s balances arrive (#164)', () => {
+  beforeEach(() => {
+    results.accounts = { data: [], error: null }
+  })
+
+  it('says the balances are on their way, and offers Refresh instead of Connect', async () => {
+    results.plaid_items = { data: [storedItem()], error: null }
+    const tree = await render()
+    const text = textOf(tree).replace(/\s+/g, ' ')
+    expect(text).toContain('Your balances are on their way')
+    expect(text).toContain("Capital One is connected, but its balances haven't arrived yet. Press Refresh to fetch them.")
+    expect(text).not.toContain('Connect your first account')
+    expect(renders(tree, RefreshButton)).toBe(true)
+    expect(renders(tree, LinkButton)).toBe(false)
+  })
+
+  it('counts several banks whose balances have not arrived', async () => {
+    results.plaid_items = { data: [storedItem(), storedItem({ id: 'item-2', institution_name: 'Amex', created_at: '2026-07-15T09:00:00Z' })], error: null }
+    expect(textOf(await render()).replace(/\s+/g, ' ')).toContain(
+      "2 banks are connected, but their balances haven't arrived yet."
+    )
+  })
+
+  it('says "Your bank" when the bank has no name', async () => {
+    results.plaid_items = { data: [storedItem({ institution_name: null })], error: null }
+    expect(textOf(await render()).replace(/\s+/g, ' ')).toContain(
+      "Your bank is connected, but its balances haven't arrived yet."
+    )
+  })
+
+  // Refresh skips a bank whose login broke, so the banner's "reconnect in Settings" has to be there
+  // too, first, as it is above the figures.
+  it("warns above the header when that bank isn't syncing either", async () => {
+    results.plaid_items = { data: [storedItem({ status: 'needs_reconnect' })], error: null }
+    const tree = await render()
+    expect(bannerText(tree)).toBe(
+      "Capital One isn't syncing — reconnect in Settings to resume. These figures may be out of date."
+    )
+    const order = blocks(tree).map((b) => b.type)
+    expect(order.indexOf(NotSyncingBanner)).toBe(0)
+    expect(order.indexOf(PageHeader)).toBe(1)
+  })
+
+  // #172: a bank that isn't syncing can't be counted on to send its balances. Refresh skips a broken
+  // login and retries the rest without fixing what stopped them, so "on their way" and "Press
+  // Refresh" would be a promise it can't keep. The card promises nothing and points to Settings,
+  // and still never offers Connect.
+  it.each(['needs_reconnect', 'config_error', 'action_at_bank', 'temporarily_unavailable'])(
+    'promises nothing for a bank that is %s, and points to Settings instead of Refresh',
+    async (status) => {
+      results.plaid_items = { data: [storedItem({ status })], error: null }
+      const tree = await render()
+      const { text, card } = emptyCard(tree)
+      expect(text).toBe(
+        "Your bank needs attention Capital One is connected, but its balances can't arrive until it's sorted out in Settings. Go to Settings"
+      )
+      expect(findElement(card, Link)?.props.href).toBe('/settings')
+      expect(renders(tree, RefreshButton)).toBe(false)
+      expect(renders(tree, LinkButton)).toBe(false)
+    }
+  )
+
+  it('says how many banks need attention when none of them is syncing', async () => {
+    results.plaid_items = {
+      data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex', status: 'config_error' })],
+      error: null,
+    }
+    expect(emptyCard(await render()).text).toBe(
+      "Your banks need attention 2 banks are connected, but their balances can't arrive until they're sorted out in Settings. Go to Settings"
+    )
+  })
+
+  // With both kinds, the card speaks only for the bank that is syncing; the banner, first, for the
+  // one that isn't.
+  it('with one bank syncing and one not, promises balances only for the one syncing', async () => {
+    results.plaid_items = {
+      data: [storedItem(), storedItem({ id: 'item-2', institution_name: 'Amex', status: 'needs_reconnect', created_at: '2026-07-15T09:00:00Z' })],
+      error: null,
+    }
+    const tree = await render()
+    expect(emptyCard(tree).text).toBe(
+      "Your balances are on their way Capital One is connected, but its balances haven't arrived yet. Press Refresh to fetch them."
+    )
+    expect(renders(tree, RefreshButton)).toBe(true)
+    expect(renders(tree, LinkButton)).toBe(false)
+    expect(bannerText(tree)).toBe("Amex isn't syncing — reconnect in Settings to resume. These figures may be out of date.")
+  })
+
+  it('still offers Connect to a household with no banks at all', async () => {
+    const tree = await render()
+    expect(textOf(tree)).toContain('Connect your first account')
+    expect(renders(tree, LinkButton)).toBe(true)
+    expect(renders(tree, RefreshButton)).toBe(false)
+  })
+
+  // Another household's bank, or this household's from the other Plaid environment, is not this
+  // household's bank waiting for balances.
+  it("still offers Connect when the only banks are another household's or the other environment's", async () => {
+    results.plaid_items = { data: FOREIGN_ITEMS, error: null }
+    const tree = await render()
+    expect(textOf(tree)).toContain('Connect your first account')
+    expect(renders(tree, LinkButton)).toBe(true)
+  })
+
+  it('greets by the household\'s hour here too', async () => {
+    results.plaid_items = { data: [storedItem()], error: null }
+    const text = textOf(await render())
+    expect(text).toContain('Good evening')
+    expect(text).toContain('Wednesday, September 2')
+  })
 })
 
 describe('Dashboard average savings (#126)', () => {
@@ -344,6 +539,29 @@ describe('Dashboard average savings (#126)', () => {
     const foot = textOf((await phoneRows()).rows[2].foot)
     expect(foot).not.toContain('Avg')
     expect(foot.replace(/\s+/g, ' ')).toContain('$0 in · $5,000 out')
+  })
+
+  // #135: every month since a bank broke is short of its transactions, so there is no average on
+  // either layout. Neither has room to say why; the banner above names the bank, and the saved
+  // breakdown gives the reason where the average would have been.
+  it("shows no average while a bank isn't syncing, on the tile or the phone row", async () => {
+    results.categories = income
+    results.transactions = fixture()
+    history.value = { kind: 'ready', month: '2026-02' }
+    results.plaid_items = { data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' })], error: null }
+    expect(await avgLine()).toBeUndefined()
+    const foot = textOf((await phoneRows()).rows[2].foot)
+    expect(foot).not.toContain('Avg')
+    expect(foot.replace(/\s+/g, ' ')).toContain('$0 in · $5,000 out')
+  })
+
+  // Only this household's banks count: a broken bank elsewhere leaves the average alone.
+  it("keeps the average when only another household's bank, or one from the other environment, is broken", async () => {
+    results.categories = income
+    results.transactions = fixture()
+    history.value = { kind: 'ready', month: '2026-02' }
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect((await avgLine())!.props.children).toBe('Avg $3,000/mo · 6 mo')
   })
 
   // Beside a whole-dollar figure, on a narrow row, the budget note is whole dollars too.
@@ -479,6 +697,17 @@ describe('Dashboard reads', () => {
   it('fails loudly when the household read fails, rather than dropping the home value from net worth', async () => {
     results.memberships = { data: null, error: { message: 'permission denied' } }
     await expect(render()).rejects.toThrow(/could not read your household: permission denied/)
+  })
+
+  // #172: an account with no membership, which sign-in lets through when it cannot check
+  // (lib/access.ts), has no household, so no banks and no home value. It renders, and reads neither:
+  // both reads are set to fail here, so reading one would throw.
+  it('renders for an account with no household, reading no banks and no home value', async () => {
+    results.memberships = { data: null, error: null }
+    results.accounts = { data: [], error: null }
+    results.plaid_items = { data: null, error: { message: 'read for no household' } }
+    results.manual_assets = { data: null, error: { message: 'read for no household' } }
+    expect(textOf(await render())).toContain('Connect your first account')
   })
 
   // #91: the read one step below the household's. Rendered as no assets, net worth dropped by the
