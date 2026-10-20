@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { inputClass } from '@/components/ui/styles'
 import type { DeleteImpact } from '@/lib/category-views'
+import { MAY_NOT_HAVE_SAVED, sendSave } from '@/lib/save-response'
 
 type Cat = { id: string; name: string; pfc_primary: string | null }
 export type CategoryUsage = Record<string, { txns: number; hasBudget: boolean; impact: DeleteImpact }>
@@ -28,34 +29,64 @@ export function CategoryManager({
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
+  // Bumped after a save whose outcome is unknown, so every row drops what was typed and shows the
+  // server's name, as "Showing the latest" says. See the rows' key below.
+  const [resets, setResets] = useState(0)
 
-  async function call(method: string, body: unknown, okMsg: string) {
+  // Add, rename and delete all save through here (#147). True only when the route said it saved.
+  async function call(method: 'POST' | 'PATCH' | 'DELETE', body: unknown, okMsg: string): Promise<boolean> {
     setBusy(true)
     setMsg('')
     setErr('')
-    const res = await fetch('/api/categories', {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    setBusy(false)
-    if (res.ok) {
-      setMsg(okMsg)
-      router.refresh()
-    } else {
-      const e = await res.json().catch(() => ({}))
-      setErr(e.error || 'Something went wrong. Please try again.')
+    let reload = false
+    let saved = false
+    try {
+      // The shared rule (lib/save-response.ts): only the route's own { ok: true } is a save.
+      const result = await sendSave('/api/categories', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (result.outcome === 'saved') {
+        saved = true
+        setMsg(okMsg)
+        reload = true
+      } else if (result.outcome === 'refused') {
+        setErr(result.error)
+        // 404 and 409: the list is stale (a category deleted on the other phone, say), so show the
+        // latest under the message.
+        reload = result.status === 404 || result.status === 409
+      } else {
+        console.error('[CategoryManager] save failed', result.cause)
+        setErr(MAY_NOT_HAVE_SAVED)
+        setResets((n) => n + 1)
+        reload = true
+      }
+    } finally {
+      // Never left with every button disabled.
+      setBusy(false)
     }
+    // Outside the try: a throw from refresh is not a failed save.
+    if (reload) router.refresh()
+    return saved
   }
 
   return (
     <div className="space-y-2">
       {msg && <p className="text-sm text-emerald">{msg}</p>}
-      {err && <p className="text-sm text-coral">{err}</p>}
+      {err && (
+        <p role="alert" className="text-sm text-coral">
+          {err}
+        </p>
+      )}
 
       {initialCategories.map((c) => (
         <CategoryRow
-          key={c.id}
+          // A row fills its field from the server's name once, when it mounts, so the key holds what
+          // must refill it: a new name from the server (renamed on the other phone, or a rename that
+          // landed) or a save whose outcome is unknown. A refusal changes neither, so what was typed
+          // stays for another try.
+          key={`${c.id}:${c.name}:${resets}`}
           cat={c}
           busy={busy}
           usage={usage[c.name] ?? NO_USAGE}
@@ -66,12 +97,14 @@ export function CategoryManager({
 
       <form
         className="flex flex-wrap gap-2 pt-3 md:max-w-md md:flex-nowrap"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault()
           const n = newName.trim()
-          if (n) {
-            call('POST', { name: n }, `Added “${n}”.`)
-            setNewName('')
+          if (!n) return
+          // Cleared only once it saved (#147): cleared before the reply, a failed add lost what was
+          // typed. And only if the field still holds that name, so one typed meanwhile stays.
+          if (await call('POST', { name: n }, `Added “${n}”.`)) {
+            setNewName((current) => (current.trim() === n ? '' : current))
           }
         }}
       >
@@ -107,8 +140,10 @@ function CategoryRow({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const changed = name.trim().length > 0 && name.trim() !== cat.name
 
+  // `busy` here as well as on the Save button: Enter in the field calls this too, and a rename sent
+  // while another save is in flight would race it (#147).
   function save() {
-    if (changed) onSave(name.trim())
+    if (changed && !busy) onSave(name.trim())
   }
 
   return (
