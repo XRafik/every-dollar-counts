@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/dashboard-page.test.tsx: the static page import
 // below is linked before this file's body runs, firing the mock factory.
-const { results, switchState } = vi.hoisted(() => ({
+const { results, switchState, onRead } = vi.hoisted(() => ({
   results: {} as Record<string, { data: unknown; error: { message: string } | null }>,
   switchState: { suggestionsOn: true },
+  // Run as a table's read is awaited, so a test can move the clock on during it.
+  onRead: {} as Record<string, () => void>,
 }))
 
 // A supabase query is a builder awaited at the end, so the stub returns itself for every chained
@@ -31,6 +33,7 @@ const chainFor = (table: string) => {
   // error (PGRST116), which a stand-in answering null would hide (#172).
   chain.maybeSingle = async () => results[table] ?? { data: null, error: null }
   chain.then = (resolve: (v: unknown) => unknown) => {
+    onRead[table]?.()
     const reply = afterCursor ? { data: [], error: null } : (results[table] ?? { data: [], error: null })
     return Promise.resolve('count' in reply && !countAsked ? { ...reply, count: null } : reply).then(resolve)
   }
@@ -164,11 +167,13 @@ beforeEach(() => {
   results.manual_assets = { data: [], error: null }
   results.plaid_items = { data: [], error: null }
   switchState.suggestionsOn = true
+  for (const k of Object.keys(onRead)) delete onRead[k]
 })
 
 // A console.error spy left behind by a failing test would hand its calls to the next test's spy.
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 // Settings is the only place a bank can be reconnected (spec §7.3), so it catches a failed read per
@@ -195,7 +200,11 @@ describe('Settings: a failed read says so in its own card (#91)', () => {
       error: null,
     }
     const tree = await SettingsPage()
-    expect(findProps(tree, HomeValueCard)).toEqual({ initialValue: 750000, updatedAt: '2026-10-01T12:00:00Z' })
+    expect(findProps(tree, HomeValueCard)).toEqual({
+      initialValue: 750000,
+      updatedAt: '2026-10-01T12:00:00Z',
+      readAt: expect.any(Number),
+    })
     expect(alertText(card(tree, 'Home value'))).toBeNull()
   })
 
@@ -343,6 +352,42 @@ describe('Settings timezone control', () => {
     const props = findProps(tree, TimezoneCard)
     expect(props).not.toBeNull()
     expect(props?.current).toBe('America/Los_Angeles')
+  })
+
+  // #182: TimezoneCard follows the server only from a read made after its last save was written, so
+  // the page tells it when it began reading, timed from before its first read, the household's that
+  // brings the zone. Taken after, a read that began before a save was written and returned after it
+  // would pass as newer.
+  it('tells the control when the page began reading, timed from before its first read', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-20T12:00:00Z'))
+    const before = Date.now()
+    onRead.households = () => vi.setSystemTime(before + 5_000)
+    const props = findProps(await SettingsPage(), TimezoneCard)
+    expect(props?.current).toBe('America/Los_Angeles')
+    expect(props?.readAt).toBe(before)
+  })
+})
+
+describe('Settings home value control', () => {
+  // #174: HomeValueCard gets the same time as TimezoneCard, though its read comes later: one time for
+  // the page, taken before its first read. A time of its own, taken before the home value's read,
+  // would be safe too, since that read would still come after it. The one time is never later than
+  // a read, and only delays a refill: a save written while the page was still reading the banks is
+  // refilled by the next reload rather than this one.
+  it('tells the card when the page began reading, the same time as the time zone control', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-20T12:00:00Z'))
+    const before = Date.now()
+    onRead.households = () => vi.setSystemTime(before + 5_000)
+    onRead.manual_assets = () => vi.setSystemTime(before + 10_000)
+    results.manual_assets = {
+      data: [{ id: 'a1', name: 'Home', value: 750000, updated_at: '2026-10-01T12:00:00Z' }],
+      error: null,
+    }
+    const tree = await SettingsPage()
+    expect(findProps(tree, HomeValueCard)).toEqual({ initialValue: 750000, updatedAt: '2026-10-01T12:00:00Z', readAt: before })
+    expect(findProps(tree, TimezoneCard)?.readAt).toBe(before)
   })
 })
 

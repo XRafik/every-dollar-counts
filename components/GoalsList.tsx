@@ -11,7 +11,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { inputClass, labelClass } from '@/components/ui/styles'
 
 type Goal = { id: string; name: string; target_amount: number; saved_amount: number }
-type Outcome = SaveOutcome['outcome']
 // A goal's failure: what its card says, and what the list says instead if a reload no longer lists
 // the goal. The second is worded as done, since by then the page has reloaded.
 type GoalFailure = { message: string; gone: string }
@@ -21,7 +20,14 @@ const GONE = 'That goal no longer exists.'
 // The route refuses an add without either in the same words.
 const NAME_AND_TARGET = 'Give the goal a name and a target above zero.'
 
-export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
+export function GoalsList({
+  initialGoals,
+  readAt,
+}: {
+  initialGoals: Goal[]
+  // When the page read initialGoals, by the server's clock (#182).
+  readAt: number
+}) {
   const router = useRouter()
   const [name, setName] = useState('')
   const [target, setTarget] = useState('')
@@ -34,11 +40,15 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
   // Failures of goals a reload no longer lists: their cards are gone and the messages with them, so
   // each is said once at the top of the list, until the next save.
   const [goneMessages, setGoneMessages] = useState<string[]>([])
-  // React's documented way to adjust state when a prop changes. The goals change only on a reload.
+  // React's documented way to adjust state when a prop changes. The goals change only on a reload. A
+  // failure can also come after the reload that dropped its goal: deleted on the other phone while
+  // its update was in flight, the goal had no card for the refusal to be said on, and nothing reloads
+  // after a refusal. Kept, it was said nowhere, until another goal's save reloaded the page and the
+  // list said it beside that save. So any failure of a goal not listed is said here too.
   const [listed, setListed] = useState(initialGoals)
-  if (listed !== initialGoals) {
+  const ids = new Set(initialGoals.map((g) => g.id))
+  if (listed !== initialGoals || Object.keys(goalErrors).some((id) => !ids.has(id))) {
     setListed(initialGoals)
-    const ids = new Set(initialGoals.map((g) => g.id))
     const gone = Object.keys(goalErrors).filter((id) => !ids.has(id))
     if (gone.length > 0) {
       setGoneMessages((said) => [...new Set([...said, ...gone.map((id) => goalErrors[id].gone)])])
@@ -62,21 +72,20 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
 
   // Add, update and delete all save through here (#165). Returns what happened, so the caller can
   // decide what becomes of what was typed.
-  async function call(method: 'POST' | 'PATCH' | 'DELETE', body: unknown, goalId: string | null): Promise<Outcome> {
+  async function call(method: 'POST' | 'PATCH' | 'DELETE', body: unknown, goalId: string | null): Promise<SaveOutcome> {
     setBusy(true)
     // Only this control's own failure goes; another's stays until its own next save.
     setFailure(goalId, null)
     setGoneMessages([])
     let reload = false
-    let outcome: Outcome = 'unknown'
+    let result: SaveOutcome
     try {
       // The shared rule (lib/save-response.ts): only the route's own { ok: true } is a save.
-      const result = await sendSave('/api/goals', {
+      result = await sendSave('/api/goals', {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      outcome = result.outcome
       if (result.outcome === 'saved') {
         reload = true
       } else if (result.outcome === 'refused') {
@@ -95,7 +104,7 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
     }
     // Outside the try: a throw from refresh is not a failed save.
     if (reload) router.refresh()
-    return outcome
+    return result
   }
 
   return (
@@ -117,7 +126,7 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
             // Cleared once it saved, not before the reply, so a refused add keeps what was typed.
             // Cleared too when it may have saved: an add is not a set, and a second Add of the same
             // goal could make two. The reload shows whether it landed.
-            if ((await call('POST', { name: n, target_amount: t }, null)) !== 'refused') {
+            if ((await call('POST', { name: n, target_amount: t }, null)).outcome !== 'refused') {
               setName('')
               setTarget('')
             }
@@ -170,6 +179,7 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
             <GoalCard
               key={g.id}
               goal={g}
+              readAt={readAt}
               busy={busy}
               error={goalErrors[g.id]?.message ?? null}
               onSave={(saved) => call('PATCH', { id: g.id, saved_amount: saved }, g.id)}
@@ -184,15 +194,18 @@ export function GoalsList({ initialGoals }: { initialGoals: Goal[] }) {
 
 function GoalCard({
   goal,
+  readAt,
   busy,
   error,
   onSave,
   onDelete,
 }: {
   goal: Goal
+  // When the page read the goal, by the server's clock (#182).
+  readAt: number
   busy: boolean
   error: string | null
-  onSave: (saved: number) => Promise<Outcome>
+  onSave: (saved: number) => Promise<SaveOutcome>
   onDelete: () => void
 }) {
   const [saved, setSaved] = useState(String(goal.saved_amount))
@@ -202,22 +215,40 @@ function GoalCard({
   // the same amount back still refills a field holding an amount the server does not have.
   // React's documented way to adjust state when a prop changes.
   const [base, setBase] = useState(saved)
+  // Whether this goal's update is in flight, and when the last one confirmed here was written, by the
+  // server's clock: 0 until one is (#182).
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState(0)
   const [shown, setShown] = useState(goal)
-  if (shown !== goal) {
+  // Set by a refusal, to refill again from the page as it is: a reload that landed while the update
+  // was in flight was held back, and nothing reloads after a refusal (#182).
+  const [reapply, setReapply] = useState(false)
+  if (shown !== goal || reapply) {
     setShown(goal)
-    if (saved === base) {
+    setReapply(false)
+    // Only a read made after this goal's last update was written can hold the amount it wrote (#182).
+    // With two quick updates, the reload asked for after the first can read the goals before the
+    // second writes and land after it: refilled from it, the field went back to the first amount,
+    // with Update disabled beside it. So the field is not refilled while an update is in flight, when
+    // the time of the write is not known yet, nor from a read made by then. Only this goal's own
+    // update holds it back: another's writes nothing of this goal's.
+    if (saved === base && !saving && readAt > savedAt) {
       setSaved(String(goal.saved_amount))
       setBase(String(goal.saved_amount))
     }
   }
   // Set after a save whose outcome is unknown, and acted on here so the field goes back to the amount
-  // the page holds now, not the one it held when Update was tapped: the reload from an earlier save
-  // can land while this one is in flight.
+  // stored as far as this card knows now, not when Update was tapped: the reload from an earlier save
+  // can land while this one is in flight. That is the page's amount, unless the page read it before
+  // the last update confirmed here was written; then it is the base, which holds that update's amount
+  // or a newer one read since (#182). Back to the page's then, the field showed the amount from
+  // before that update, with Update disabled, as if the update had been undone.
   const [resetting, setResetting] = useState(false)
   if (resetting) {
     setResetting(false)
-    setSaved(String(goal.saved_amount))
-    setBase(String(goal.saved_amount))
+    const back = readAt > savedAt ? String(goal.saved_amount) : base
+    setSaved(back)
+    setBase(back)
   }
   const [confirmDelete, setConfirmDelete] = useState(false)
   const ratio = goalProgress(Number(saved || 0), goal.target_amount)
@@ -227,17 +258,29 @@ function GoalCard({
 
   async function update() {
     const sent = saved
-    const outcome = await onSave(Number(sent || 0))
-    if (outcome === 'saved') {
-      // Now the server's, so the reload refills it with the amount as stored.
-      setBase(sent)
-    } else if (outcome === 'unknown') {
-      // The bar and the figures follow the field, so an amount left in it would show progress the
-      // server may not have. Back to the amount last read (see `resetting`); the reload shows the
-      // latest.
-      setResetting(true)
+    setSaving(true)
+    try {
+      const result = await onSave(Number(sent || 0))
+      if (result.outcome === 'saved') {
+        // Now the server's, so the reload refills it with the amount as stored. From here on, a read
+        // made before this write carries the amount it replaced.
+        setBase(sent)
+        if (result.savedAt !== undefined) setSavedAt(result.savedAt)
+      } else if (result.outcome === 'unknown') {
+        // The bar and the figures follow the field, so an amount left in it would show progress the
+        // server may not have. Back to the amount stored as far as this card knows (see `resetting`);
+        // the reload shows the latest.
+        setResetting(true)
+      } else {
+        // A refusal wrote nothing: what was typed stays, for another try. The page is applied again,
+        // so a reload held back while this update was in flight still reaches the field if nothing
+        // was typed into it (#182).
+        setReapply(true)
+      }
+    } finally {
+      // Never left holding back the reloads.
+      setSaving(false)
     }
-    // A refusal wrote nothing: what was typed stays, for another try.
   }
 
   return (
