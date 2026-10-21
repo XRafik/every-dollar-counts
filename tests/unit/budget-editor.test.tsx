@@ -10,6 +10,7 @@ import {
   redirectedToLogin,
   refused,
   saved,
+  savedAt,
   useFakeSaveClock,
 } from './helpers/save-replies'
 
@@ -26,9 +27,11 @@ const refresh = vi.hoisted(() => vi.fn())
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }))
 
 // Two categories, the second over its limit, so both the ordinary and the coral branch render.
+// readAt is when the page read the limits, by the server's clock.
 const props = {
   categoryNames: ['Groceries', 'Dining'],
   initialLimits: { Groceries: 400, Dining: 150 },
+  readAt: 1_000,
   spend: { Groceries: 220, Dining: 210 },
 }
 
@@ -330,5 +333,283 @@ describe('BudgetEditor saves', () => {
     await screen.findByText('Saved.')
     fireEvent.change(limit('Groceries'), { target: { value: '600' } })
     await waitFor(() => expect(screen.queryByText('Saved.')).toBeNull())
+  })
+})
+
+// #176: two quick saves, and the reload asked for after the first read the limits before the
+// second was written. Refilled from it, the fields showed the first save's limits beside "Saved.",
+// and the next Save sent them back, undoing the second. Times are the server's clock: the route says
+// when it wrote (savedAt), and the page when it read (readAt). Groceries starts at 400, read at 1,000.
+describe('BudgetEditor and a reload that read before the last save', () => {
+  const limit = (c: string) => screen.getByLabelText(`${c} monthly budget limit`) as HTMLInputElement
+  const button = () => screen.getByRole('button', { name: /Save budgets|Saving…/ }) as HTMLButtonElement
+  // The limits the nth request sent.
+  const sent = (fetchMock: ReturnType<typeof vi.fn>, n: number) => JSON.parse(fetchMock.mock.calls[n][1].body as string).items
+  async function saveGroceries(value: string) {
+    fireEvent.change(limit('Groceries'), { target: { value } })
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+  }
+  // The first save's reload: read at 2,500, after the first save (written at 2,000) and before the
+  // second (written at 3,000).
+  const firstReload = { readAt: 2_500, initialLimits: { Groceries: 500, Dining: 150 } }
+  // A third category, Travel, with a limit of 300.
+  const travel = { categoryNames: ['Groceries', 'Dining', 'Travel'], initialLimits: { Groceries: 400, Dining: 150, Travel: 300 } }
+
+  it("keeps the second save's limit when the first save's reload lands after it", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(savedAt(2_000)).mockResolvedValueOnce(savedAt(3_000)).mockResolvedValueOnce(savedAt(4_000))
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    await saveGroceries('600')
+    rerender(<BudgetEditor {...props} {...firstReload} />)
+    expect(limit('Groceries').value).toBe('600')
+    expect(screen.getByText('Saved.')).toBeTruthy()
+    fireEvent.change(limit('Dining'), { target: { value: '200' } })
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+    expect(sent(fetchMock, 2)).toEqual([
+      { category: 'Groceries', monthly_limit: 600 },
+      { category: 'Dining', monthly_limit: 200 },
+    ])
+    expect(limit('Groceries').value).toBe('600')
+  })
+
+  // What Next 16.4.2 does with the same two saves: a reload's page that has not arrived when the next
+  // reload is asked for is never shown, so the first save's reload reaches the editor while the second
+  // save is still in flight.
+  it("keeps the second save's limit when the first save's reload lands while it is in flight", async () => {
+    let settle!: (res: Response) => void
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(savedAt(2_000))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (settle = resolve)))
+      .mockResolvedValueOnce(savedAt(4_000))
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    fireEvent.change(limit('Groceries'), { target: { value: '600' } })
+    fireEvent.click(button())
+    rerender(<BudgetEditor {...props} {...firstReload} />)
+    expect(limit('Groceries').value).toBe('600')
+    settle(savedAt(3_000))
+    await screen.findByText('Saved.')
+    expect(limit('Groceries').value).toBe('600')
+    fireEvent.change(limit('Dining'), { target: { value: '200' } })
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+    expect(sent(fetchMock, 2)).toEqual([
+      { category: 'Groceries', monthly_limit: 600 },
+      { category: 'Dining', monthly_limit: 200 },
+    ])
+    expect(limit('Groceries').value).toBe('600')
+  })
+
+  // A refusal is not followed by a reload, so the first save's reload can still land after it. The
+  // limits typed for the refused save were not stored: they are typing, which no reload overwrites.
+  // After "The limits you cleared could not be removed", the raised ones were written, and the first
+  // save's limits put back over them would have been sent again by the retry.
+  it("keeps what was typed after a refusal when the first save's reload lands after it", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(savedAt(2_000))
+      .mockResolvedValueOnce(refused(500, 'The limits you cleared could not be removed. Please try again.'))
+      .mockResolvedValueOnce(savedAt(4_000))
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    fireEvent.change(limit('Groceries'), { target: { value: '600' } })
+    fireEvent.change(limit('Dining'), { target: { value: '' } })
+    fireEvent.click(button())
+    await screen.findByRole('alert')
+    rerender(<BudgetEditor {...props} {...firstReload} />)
+    expect(limit('Groceries').value).toBe('600')
+    expect(limit('Dining').value).toBe('')
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+    expect(sent(fetchMock, 2)).toEqual([
+      { category: 'Groceries', monthly_limit: 600 },
+      { category: 'Dining', monthly_limit: 0 },
+    ])
+  })
+
+  // Only the fields the refused save sent go back: a category that arrived meanwhile was filled from
+  // the server, and still follows it.
+  it('keeps a category that arrived during a refused save following the server', async () => {
+    let settle!: (res: Response) => void
+    vi.stubGlobal('fetch', vi.fn().mockImplementationOnce(() => new Promise<Response>((resolve) => (settle = resolve))))
+    const withTravel = { ...props, categoryNames: ['Groceries', 'Dining', 'Travel'] }
+    const { rerender } = render(<BudgetEditor {...props} />)
+    fireEvent.change(limit('Groceries'), { target: { value: '500' } })
+    fireEvent.click(button())
+    rerender(<BudgetEditor {...withTravel} readAt={1_500} initialLimits={{ Groceries: 400, Dining: 150, Travel: 300 }} />)
+    settle(refused(500, 'That could not be saved. Please try again.'))
+    await screen.findByRole('alert')
+    // The other phone has set Travel to 350 since.
+    rerender(<BudgetEditor {...withTravel} readAt={2_500} initialLimits={{ Groceries: 400, Dining: 150, Travel: 350 }} />)
+    expect(limit('Travel').value).toBe('350')
+    expect(limit('Groceries').value).toBe('500')
+  })
+
+  // A reload that lands while a save is in flight holds back every field the save sent, and nothing
+  // reloads after a refusal. Applied once the save is refused, it brings the other phone's change to
+  // the fields nobody typed into; left unapplied, the retry sent the old limit back over it.
+  it('applies a reload that landed during a refused save once it is refused', async () => {
+    let settle!: (res: Response) => void
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(savedAt(2_000))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (settle = resolve)))
+      .mockResolvedValueOnce(savedAt(4_000))
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(<BudgetEditor {...props} {...travel} />)
+    await saveGroceries('500')
+    fireEvent.change(limit('Dining'), { target: { value: '200' } })
+    fireEvent.click(button())
+    // The first save's reload, read at 2,500: the other phone has set Travel to 350.
+    rerender(<BudgetEditor {...props} {...travel} readAt={2_500} initialLimits={{ Groceries: 500, Dining: 150, Travel: 350 }} />)
+    expect(limit('Travel').value).toBe('300')
+    settle(refused(500, 'That could not be saved. Please try again.'))
+    await screen.findByRole('alert')
+    expect(limit('Travel').value).toBe('350')
+    expect(limit('Dining').value).toBe('200')
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+    expect(sent(fetchMock, 2)).toEqual([
+      { category: 'Groceries', monthly_limit: 500 },
+      { category: 'Dining', monthly_limit: 200 },
+      { category: 'Travel', monthly_limit: 350 },
+    ])
+  })
+
+  // Applied again after a refusal, the page is still only as new as its read: one made before the
+  // last confirmed save refills nothing that save sent.
+  it('does not apply a reload older than the last save once a later save is refused', async () => {
+    let settle!: (res: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(savedAt(2_000))
+        .mockImplementationOnce(() => new Promise<Response>((resolve) => (settle = resolve)))
+    )
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    fireEvent.change(limit('Dining'), { target: { value: '200' } })
+    fireEvent.click(button())
+    // Read at 1,500, before the first save was written.
+    rerender(<BudgetEditor {...props} readAt={1_500} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    settle(refused(500, 'That could not be saved. Please try again.'))
+    await screen.findByRole('alert')
+    expect(limit('Groceries').value).toBe('500')
+    expect(limit('Dining').value).toBe('200')
+  })
+
+
+  it("shows a change from the other phone once a reload read after the save, and drops Saved. beside it", async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(savedAt(2_000)))
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    // Read at 1,500, before the save.
+    rerender(<BudgetEditor {...props} readAt={1_500} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    expect(limit('Groceries').value).toBe('500')
+    expect(screen.getByText('Saved.')).toBeTruthy()
+    // Read at 2,500, after it: the other phone has set Dining to 175 since.
+    rerender(<BudgetEditor {...props} readAt={2_500} initialLimits={{ Groceries: 500, Dining: 175 }} />)
+    expect(limit('Groceries').value).toBe('500')
+    expect(limit('Dining').value).toBe('175')
+    expect(screen.queryByText('Saved.')).toBeNull()
+  })
+
+  it('keeps a limit typed after the save, whichever reload lands', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(savedAt(2_000)))
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    fireEvent.change(limit('Dining'), { target: { value: '120' } })
+    rerender(<BudgetEditor {...props} readAt={1_500} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    expect(limit('Groceries').value).toBe('500')
+    expect(limit('Dining').value).toBe('120')
+    // The other phone has set Groceries to 450 since the save.
+    rerender(<BudgetEditor {...props} readAt={2_500} initialLimits={{ Groceries: 450, Dining: 150 }} />)
+    expect(limit('Groceries').value).toBe('450')
+    expect(limit('Dining').value).toBe('120')
+  })
+
+  // The page takes its time before reading and the route after writing, so a read stamped in the
+  // same millisecond as the write may still have read before it. The next reload brings anything newer.
+  it('does not refill from a read stamped at the time of the save', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(savedAt(2_000)))
+    const { rerender } = render(<BudgetEditor {...props} />)
+    await saveGroceries('500')
+    rerender(<BudgetEditor {...props} readAt={2_000} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    expect(limit('Groceries').value).toBe('500')
+    rerender(<BudgetEditor {...props} readAt={2_001} initialLimits={{ Groceries: 450, Dining: 150 }} />)
+    expect(limit('Groceries').value).toBe('450')
+  })
+
+  // A category added on the other phone was never sent from here, so any read can fill it. Left
+  // blank, it would be sent as no limit by the next Save, deleting the limit it has. Filled while a
+  // save is in flight, it was not sent by that save, so that save does not say "Saved." beside it.
+  it('fills a category it has not shown before from any reload, and only a save that sent it says Saved.', async () => {
+    let settle!: (res: Response) => void
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (settle = resolve)))
+      .mockResolvedValueOnce(savedAt(3_000))
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(<BudgetEditor {...props} />)
+    fireEvent.change(limit('Groceries'), { target: { value: '500' } })
+    fireEvent.click(button())
+    // Travel, added with a limit of 300 on the other phone, arrives while the save is in flight.
+    rerender(
+      <BudgetEditor
+        {...props}
+        categoryNames={['Groceries', 'Dining', 'Travel']}
+        readAt={1_500}
+        initialLimits={{ Groceries: 400, Dining: 150, Travel: 300 }}
+      />
+    )
+    expect(limit('Groceries').value).toBe('500')
+    expect(limit('Travel').value).toBe('300')
+    settle(savedAt(2_000))
+    await waitFor(() => expect(button().disabled).toBe(false))
+    expect(screen.queryByText('Saved.')).toBeNull()
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+    expect(sent(fetchMock, 1)).toContainEqual({ category: 'Travel', monthly_limit: 300 })
+  })
+
+  // A category deleted on the other phone leaves no field behind. Kept, its field counted as sent when
+  // the category was added again during a save, and showed the deleted limit beside "Saved.", which
+  // the next Save would have put back.
+  it('forgets a category deleted on the other phone, so it comes back empty during a save', async () => {
+    let settle!: (res: Response) => void
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => (settle = resolve)))
+      .mockResolvedValueOnce(savedAt(3_000))
+    vi.stubGlobal('fetch', fetchMock)
+    const { rerender } = render(<BudgetEditor {...props} {...travel} />)
+    // Travel deleted on the other phone, and its limit with it.
+    rerender(<BudgetEditor {...props} readAt={1_500} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    fireEvent.change(limit('Groceries'), { target: { value: '500' } })
+    fireEvent.click(button())
+    // Added again with no limit, arriving while the save is in flight.
+    rerender(<BudgetEditor {...props} {...travel} readAt={1_800} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    expect(limit('Travel').value).toBe('')
+    settle(savedAt(2_000))
+    await waitFor(() => expect(button().disabled).toBe(false))
+    expect(limit('Travel').value).toBe('')
+    fireEvent.click(button())
+    await screen.findByText('Saved.')
+    expect(sent(fetchMock, 1)).toContainEqual({ category: 'Travel', monthly_limit: 0 })
+  })
+
+  it('takes the limit of a category deleted and added again on the other phone', () => {
+    const { rerender } = render(<BudgetEditor {...props} {...travel} />)
+    rerender(<BudgetEditor {...props} readAt={1_500} initialLimits={{ Groceries: 400, Dining: 150 }} />)
+    // Added again, with a limit of 250.
+    rerender(<BudgetEditor {...props} {...travel} readAt={2_000} initialLimits={{ Groceries: 400, Dining: 150, Travel: 250 }} />)
+    expect(limit('Travel').value).toBe('250')
   })
 })
