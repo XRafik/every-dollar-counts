@@ -16,8 +16,10 @@ export const MAY_NOT_HAVE_SAVED = 'It may not have saved. Showing the latest.'
 export type SaveResult = { ok: true; savedAt?: number } | { ok: false; error: string; status: number }
 
 // Throws when the reply cannot be read: an OK JSON reply that does not parse, or a failure that is
-// not the route's own JSON (a 502, a 504, an HTML 500), which can come after the write committed.
-// The outcome is unknown, and the caller treats it like a request lost in flight.
+// not the route's own JSON (a 502, a 504, an HTML 500), which can come after the write committed. A
+// route answers that way itself, with a 502 in plain text, when the database never answered its
+// write (lib/lost-reply.ts, #173). The outcome is unknown, and the caller treats it like a request
+// lost in flight.
 export async function readSaveResponse(res: Response): Promise<SaveResult> {
   const isJson = (res.headers.get('content-type') ?? '').includes('application/json')
   if (res.redirected || (res.ok && !isJson)) return { ok: false, error: SESSION_ENDED, status: res.status }
@@ -36,8 +38,9 @@ export async function readSaveResponse(res: Response): Promise<SaveResult> {
 // the server has.
 export const SAVE_TIMEOUT_MS = 20_000
 
-// 'unknown': the request failed in flight, timed out, or got a reply that could not be read. It may
-// have written, so the caller shows MAY_NOT_HAVE_SAVED and reloads. `cause` is for the log.
+// 'unknown': the request failed in flight, timed out, or got a reply that could not be read, which is
+// how a route answers a write the database never answered (#173). It may have written, so the caller
+// shows MAY_NOT_HAVE_SAVED and reloads. `cause` is for the log.
 export type SaveOutcome =
   | { outcome: 'saved'; savedAt?: number }
   | { outcome: 'refused'; error: string; status: number }
@@ -58,7 +61,8 @@ export async function sendSave(url: string, init: RequestInit): Promise<SaveOutc
 // For a request whose reply carries data rather than a bare save: a link token, a sync's counts, a
 // linked bank's warning (#165). The rules are sendSave's. A redirect, or an OK reply that is not
 // JSON, is the login page, so the session ended. A reply that cannot be read may have come after the
-// work was done, so it is 'unknown'. A failure is a refusal only when it is the route's own { error }
+// work was done, so it is 'unknown', as is the plain-text 502 a route gives when the database never
+// answered one of its writes (#173). A failure is a refusal only when it is the route's own { error }
 // in words, as every refusal those routes give is; anything else came from in front of the route.
 // 'answered' hands back the route's JSON object for the caller to check. The timeout is the caller's,
 // because how long a route may run, and whether giving up early is harmless, differ by route.

@@ -29,6 +29,8 @@ import { AuthApiError, AuthRetryableFetchError, AuthSessionMissingError, type Au
 import { createClient } from '@/lib/supabase/server'
 import { EnvMismatchError } from '@/lib/app-env'
 import { POST } from '@/app/api/transactions/categorize/route'
+import { NO_ANSWER, REFUSED_5XX } from '../stubs/no-answer'
+import { answerOf, UNKNOWN_ANSWER } from './helpers/route-answers'
 
 type Row = Record<string, unknown>
 type Err = { message: string } | null
@@ -305,6 +307,25 @@ describe('POST /api/transactions/categorize', () => {
 
   it('answers 500 for a failed write, without the database text', async () => {
     makeSupabase({ row: ROW, update: { error: { message: 'new row violates row-level security' }, count: null } })
+    const res = await post({ transactionId: 'txn-1', category: 'Grocery' })
+    expect(res.status).toBe(500)
+    expect((await res.json()).error).toBe('That could not be saved. Please try again.')
+  })
+
+  // #173: the pick may have landed, so the outcome is unknown, never a refusal. Only a saved pick
+  // teaches, so nothing is learned from it, and the change log records only what was written.
+  it('answers that it may not have saved when the database never answers the write, and learns nothing', async () => {
+    const calls = makeSupabase({ row: ROW, update: NO_ANSWER })
+    const res = await post({ transactionId: 'txn-1', category: 'Grocery' })
+    expect(await answerOf(res)).toEqual(UNKNOWN_ANSWER)
+    expect(calls.upserts).toHaveLength(0)
+    expect(logs).toContainEqual(['[categorize] update failed', 'TypeError: fetch failed'])
+    expect(logs.some((l) => l[0] === '[categorize] changed')).toBe(false)
+  })
+
+  // A refusal carries a code, 5xx or not, and nothing was written.
+  it('answers 500 for a refused write whose status is a 5xx, since it carries a code', async () => {
+    makeSupabase({ row: ROW, update: REFUSED_5XX })
     const res = await post({ transactionId: 'txn-1', category: 'Grocery' })
     expect(res.status).toBe(500)
     expect((await res.json()).error).toBe('That could not be saved. Please try again.')

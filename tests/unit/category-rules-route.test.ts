@@ -52,6 +52,8 @@ vi.mock('@/lib/app-env', async (importOriginal) => ({
 
 import { EnvMismatchError } from '@/lib/app-env'
 import { PATCH, DELETE } from '@/app/api/category-rules/route'
+import { NO_ANSWER, REFUSED_5XX } from '../stubs/no-answer'
+import { answerOf, UNKNOWN_ANSWER } from './helpers/route-answers'
 
 const CATS = [
   { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 },
@@ -139,6 +141,26 @@ describe('PATCH /api/category-rules (Change)', () => {
     expect(await error(res)).toBe('That could not be saved. Please try again.')
   })
 
+  // #173: the Change may have landed. Tried again after it did, it would match nothing and say the
+  // rule just changed.
+  it('answers that it may not have saved when the database never answers the write', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    db.write = NO_ANSWER
+    const res = await change()
+    expect(await answerOf(res)).toEqual(UNKNOWN_ANSWER)
+    log.mockRestore()
+  })
+
+  // A refusal carries a code, 5xx or not, and nothing was written.
+  it('answers 500 for a refused write whose status is a 5xx, since it carries a code', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    db.write = REFUSED_5XX
+    const res = await change()
+    expect(res.status).toBe(500)
+    expect(await error(res)).toBe('That could not be saved. Please try again.')
+    log.mockRestore()
+  })
+
   it('answers 500 on a failed rule or categories read', async () => {
     db.rule = { data: null, error: { message: 'boom' } }
     expect((await change()).status).toBe(500)
@@ -195,6 +217,24 @@ describe('DELETE /api/category-rules (Remove)', () => {
     expect((await remove()).status).toBe(409)
     db.write = { error: { message: 'boom' }, count: null }
     expect((await remove()).status).toBe(500)
+  })
+
+  // #173: the rule may be gone.
+  it('answers that it may not have saved when the database never answers the delete', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    db.write = NO_ANSWER
+    const res = await remove()
+    expect(await answerOf(res)).toEqual(UNKNOWN_ANSWER)
+    log.mockRestore()
+  })
+
+  it('answers 500 for a refused delete whose status is a 5xx, since it carries a code', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    db.write = REFUSED_5XX
+    const res = await remove()
+    expect(res.status).toBe(500)
+    expect(await error(res)).toBe('That could not be saved. Please try again.')
+    log.mockRestore()
   })
 
   it('logs the rule id, code and message when the delete fails', async () => {

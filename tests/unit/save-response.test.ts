@@ -10,6 +10,7 @@ import {
   replyWith,
   saved,
   savedAt,
+  unanswered,
   useFakeSaveClock,
 } from './helpers/save-replies'
 
@@ -101,6 +102,8 @@ describe('sendSave', () => {
   it.each([
     ['a gateway error page', badGateway],
     ['an OK reply whose JSON is cut off', () => new Response('{"ok":tr', { headers: { 'content-type': 'application/json' } })],
+    // The plain-text 502 a route gives when the database never answered its write (#173).
+    ["the route's word that the database never answered", unanswered],
   ])('reports %s as unknown, because the write may have landed', async (_, reply) => {
     vi.stubGlobal('fetch', answering(reply))
     const result = await sendSave('/api/budgets', { method: 'POST' })
@@ -198,6 +201,8 @@ describe('sendRequest', () => {
     ['an OK reply that is JSON null', () => replyWith(null)],
     ['an OK reply that is a JSON number', () => replyWith(42)],
     ['an OK reply that is a JSON list', () => replyWith([1, 2])],
+    // The plain-text 502 a route gives when the database never answered one of its writes (#173).
+    ["the route's word that the database never answered", unanswered],
   ])('reports %s as unknown, because the work may have been done', async (_, reply) => {
     vi.stubGlobal('fetch', answering(reply))
     const result = await sendRequest('/api/plaid/exchange-public-token', { method: 'POST' }, 20_000)

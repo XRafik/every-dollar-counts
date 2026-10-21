@@ -11,12 +11,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 //   columns asked for;
 // - records every filter on the update, which runs only when awaited after the whole chain, against
 //   the households that match each filter's column and value;
-// - returns a count only when { count: 'exact' } is asked for, as PostgREST does.
+// - returns a count only when { count: 'exact' } is asked for, as PostgREST does;
+// - can give the update a reply of the test's: a request lost in flight, as postgrest-js reports
+//   it, or a 5xx refusal (#173).
 vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn() }))
 
 import { AuthRetryableFetchError, type AuthError } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { POST } from '@/app/api/household/timezone/route'
+import { NO_ANSWER, REFUSED_5XX } from '../stubs/no-answer'
+import { answerOf, UNKNOWN_ANSWER } from './helpers/route-answers'
 
 type Row = Record<string, unknown>
 type DbError = { code?: string; message: string } | null
@@ -37,6 +41,8 @@ function makeSupabase({
   // The households the update can reach. None: the update policy is missing, as before #73.
   households = HOUSEHOLDS,
   updateError = null as DbError,
+  // A reply for the update in place of its usual one.
+  reply = undefined as unknown,
   // Called as the update is done, so a test can move the clock on.
   onWrite = () => {},
 } = {}) {
@@ -69,6 +75,7 @@ function makeSupabase({
               eq: (col: string, val: unknown) => (entry.filters.push(['eq', col, val]), builder),
               then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => {
                 onWrite()
+                if (reply) return Promise.resolve(reply).then(resolve, reject)
                 const matched = households.filter((h) => entry.filters.every(([, col, val]) => h[col as string] === val)).length
                 const result = updateError ? { error: updateError, count: null } : { error: null, count: matched }
                 return Promise.resolve(options?.count === 'exact' ? result : { ...result, count: null }).then(resolve, reject)
@@ -204,5 +211,21 @@ describe('POST /api/household/timezone', () => {
       '[household/timezone] update failed',
       { household_id: 'hh-1', code: '42501', message: 'permission denied for table households' },
     ])
+  })
+
+  // #173: the zone may have been written, so the outcome is unknown, never a refusal.
+  it('answers that it may not have saved when the database never answers the update, and logs it', async () => {
+    makeSupabase({ reply: NO_ANSWER })
+    const res = await save()
+    expect(await answerOf(res)).toEqual(UNKNOWN_ANSWER)
+    expect(logs).toContainEqual(['[household/timezone] update failed', { household_id: 'hh-1', code: '', message: 'TypeError: fetch failed' }])
+  })
+
+  // A refusal carries a code, 5xx or not, and nothing was written.
+  it('answers 500 for a refused update whose status is a 5xx, since it carries a code', async () => {
+    makeSupabase({ reply: REFUSED_5XX })
+    const res = await save()
+    expect(res.status).toBe(500)
+    expect(await errorOf(res)).toBe(TRY_AGAIN)
   })
 })
