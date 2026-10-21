@@ -9,8 +9,9 @@ export function notSyncing<T extends { status: string }>(items: T[]): T[] {
   return items.filter((i) => i.status !== 'ok')
 }
 
-// Banks with no accounts yet, split by what Refresh can do for them (#186), for the three places that
-// word them: the #164 dashboard card, components/MissingBalancesNote.tsx and the Settings first line.
+// Banks with no accounts yet, split by what Refresh can do for them (#186), for the two places that
+// word them together: the #164 dashboard card and components/MissingBalancesNote.tsx. Settings says
+// it of each bank in its own line (components/BankList.tsx).
 // - `syncing`: Refresh can bring in their balances and transactions. They are syncing, or the bank
 //   only didn't respond last time (temporarily_unavailable), which Refresh simply retries
 //   (lib/sync-policy.ts).
@@ -40,9 +41,12 @@ export function withoutAccounts<T extends { id: string }>(items: T[], accounts: 
 // balances arrive it has no accounts rows, and so no transactions either (#170). Read as "no
 // banks", that state invited linking the same bank again, which spends one of ten lifetime
 // connections (#51). Only for banks whose balances Refresh can pull (bySync). One whose bank didn't
-// respond last time is told so, briefly, so the wait has a reason (#186). For one bank or more.
-export function balancesPending(items: { institution_name: string | null; status: string }[]): string {
-  const quiet = items.filter((i) => i.status === 'temporarily_unavailable')
+// respond last time is told so, briefly, so the wait has a reason (#186). Not one whose sync failed
+// on this app's own side (APP_ERROR, #189): that wasn't the bank. For one bank or more.
+export function balancesPending(
+  items: { institution_name: string | null; status: string; status_detail: string | null }[]
+): string {
+  const quiet = items.filter((i) => i.status === 'temporarily_unavailable' && i.status_detail !== 'APP_ERROR')
   if (items.length === 1) {
     const why = quiet.length ? " It didn't respond last time." : ''
     return `${items[0].institution_name ?? 'Your bank'} is connected, but its balances and transactions haven't arrived yet.${why}`
@@ -61,10 +65,8 @@ export function balancesPending(items: { institution_name: string | null; status
 // The same for banks with no accounts that Refresh can't help (bySync), and it promises nothing.
 // Refresh skips a bank whose login broke, and one that needs something done at the bank or to its
 // setup fails again, so their balances are not on their way; Settings says what each one needs.
-// `inSettings` says where, for a page other than Settings.
-export function balancesBlocked(items: { institution_name: string | null }[], { inSettings = false } = {}): string {
-  const where = inSettings ? ' in Settings' : ''
+export function balancesBlocked(items: { institution_name: string | null }[]): string {
   return items.length === 1
-    ? `${items[0].institution_name ?? 'Your bank'} is connected, but its balances and transactions can't arrive until it's sorted out${where}.`
-    : `${items.length} banks are connected, but their balances and transactions can't arrive until they're sorted out${where}.`
+    ? `${items[0].institution_name ?? 'Your bank'} is connected, but its balances and transactions can't arrive until it's sorted out in Settings.`
+    : `${items.length} banks are connected, but their balances and transactions can't arrive until they're sorted out in Settings.`
 }

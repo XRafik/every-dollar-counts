@@ -21,7 +21,7 @@ export function MissingBalancesNote({
   accounts,
   refreshButton = true,
 }: {
-  items: Pick<ItemSummary, 'id' | 'institution_name' | 'status'>[]
+  items: Pick<ItemSummary, 'id' | 'institution_name' | 'status' | 'status_detail'>[]
   accounts: { plaid_item_id: string }[]
   refreshButton?: boolean
 }) {
@@ -32,7 +32,7 @@ export function MissingBalancesNote({
       <p className="text-sm text-muted">
         {[
           syncing.length ? `${balancesPending(syncing)} Press Refresh to fetch them.` : '',
-          behind.length ? balancesBlocked(behind, { inSettings: true }) : '',
+          behind.length ? balancesBlocked(behind) : '',
         ]
           .filter(Boolean)
           .join(' ')}
