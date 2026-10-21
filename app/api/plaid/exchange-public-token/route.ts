@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { isAuthRetryableFetchError } from '@supabase/supabase-js'
 import { plaidClient, plaidEnv } from '@/lib/plaid'
-import { plaidLogSafe } from '@/lib/plaid-errors'
+import { fromPlaid, plaidLogSafe } from '@/lib/plaid-errors'
 import { encrypt } from '@/lib/crypto'
 import { createClient } from '@/lib/supabase/server'
 import { supabaseAdmin } from '@/lib/supabase/admin'
@@ -23,7 +23,7 @@ export const maxDuration = 300
 // check Settings first, since every new attempt spends a connection. Link has already created the
 // Item at Plaid by the time this runs.
 const NOT_FINISHED = "Couldn't finish connecting that bank."
-const BALANCES_LATER = 'Bank connected, but its balances have not arrived yet. Press Refresh in a moment.'
+const BALANCES_LATER = 'Bank connected, but its balances have not arrived yet. Refresh will fetch them.'
 const fail = (status: number, error: string) => NextResponse.json({ error }, { status })
 
 // Only the three product strings we support; default to transactions.
@@ -240,11 +240,15 @@ export async function POST(req: Request) {
     } catch (e) {
       // Plaid's first pull runs for minutes to hours on a real bank. An empty result here is
       // normal, not broken — and re-linking to "fix" it would spend another slot for nothing.
+      // A failure of this app's own, such as a database write in lib/ingest.ts, is no such wait, so
+      // it isn't worded as one (#192). Refresh retries both. Each says what Refresh will do rather
+      // than to press it, as LinkButton is on Settings too, which has no Refresh button.
       console.error('[plaid] initial sync failed', item.id, plaidLogSafe(e))
       return NextResponse.json({
         ok: true,
-        warning:
-          'Bank connected. Transactions can take a few minutes to a few hours to arrive on a first connection — press Refresh again shortly. Do not re-link.',
+        warning: fromPlaid(e)
+          ? 'Bank connected. Transactions can take a few minutes to a few hours to arrive on a first connection. Refresh will fetch them. Do not re-link.'
+          : "Bank connected, but this app couldn't save its transactions. Refresh will try again. Do not re-link.",
       })
     }
   }
