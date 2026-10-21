@@ -3,49 +3,97 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // vi.hoisted for the same reason as tests/unit/breakdown-page.test.tsx and
 // tests/unit/dashboard-page.test.tsx: the static page import below is linked before this file's
 // body runs, firing the mock factory.
-const { results, selects } = vi.hoisted(() => ({
+const { results, selects, gates, started } = vi.hoisted(() => ({
   // Every `.select()` the page sends, per table, so a test can pin the suggestion embed (§7.4).
   selects: {} as Record<string, string[]>,
   results: {} as Record<
     string,
     { data: unknown; count?: number; error: { message: string } | null }
   >,
+  // Reads a test holds open until it lets go, by name, and every read the page has started, so a
+  // test can tell a read made beside another from one made after it (#156).
+  gates: {} as Record<string, Promise<void>>,
+  started: [] as string[],
 }))
 
 // A supabase query is a builder awaited at the end, so the stub returns itself for every chained
 // method and resolves to whatever the test configured for that table. Same shape as the two page
 // tests above; `range` and `or` are this page's additions, and the transactions read destructures
-// `count` alongside `data` because it asks for { count: 'exact' }.
+// `count` alongside `data` because it asks for { count: 'exact' }. An accounts read gets only the
+// columns it selects, as from Postgres: the note needs each account's plaid_item_id (#170), and a
+// read that dropped it would leave every bank looking as though none of its accounts had arrived.
 const chainFor = (table: string) => {
   const chain: Record<string, unknown> = {}
+  let columns: string[] = []
   for (const m of ['select', 'order', 'eq', 'gte', 'lt', 'lte', 'range', 'or', 'limit', 'not'])
     chain[m] = () => chain
   chain.select = (cols: string) => {
     (selects[table] ??= []).push(cols)
+    columns = cols.split(',').map((c) => c.trim())
     return chain
   }
-  chain.single = async () => results[table] ?? { data: null, error: null }
-  chain.maybeSingle = async () => results[table] ?? { data: null, error: null }
-  chain.then = (resolve: (v: unknown) => unknown) =>
-    Promise.resolve(results[table] ?? { data: [], count: 0, error: null }).then(resolve)
+  const selected = (reply: { data: unknown; count?: number; error: unknown }) =>
+    table === 'accounts' && Array.isArray(reply.data)
+      ? { ...reply, data: (reply.data as Record<string, unknown>[]).map((r) => Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]]))) }
+      : reply
+  // maybeSingle only. Null data and no error is its answer for no row; .single() makes no row an
+  // error (PGRST116), which a stand-in answering null would hide (#172).
+  chain.maybeSingle = async () => {
+    started.push(table)
+    await gates[table]
+    return results[table] ?? { data: null, error: null }
+  }
+  chain.then = (resolve: (v: unknown) => unknown) => {
+    started.push(table)
+    return Promise.resolve(gates[table])
+      .then(() => selected(results[table] ?? { data: [], count: 0, error: null }))
+      .then(resolve)
+  }
   return chain
 }
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: async () => ({ from: (table: string) => chainFor(table) }),
-}))
+// The signed-in client refuses plaid_items, which RLS gives it no rows of (#169).
+vi.mock('@/lib/supabase/server', async () => {
+  const { refuseSignedInPlaidItems } = await import('../stubs/plaid-items')
+  return {
+    createClient: async () => ({
+      from: (table: string) => {
+        refuseSignedInPlaidItems(table)
+        return chainFor(table)
+      },
+    }),
+  }
+})
+// The service-role client reads only plaid_items here, for the "isn't syncing" banner (#171),
+// through the strict stand-in in tests/stubs/plaid-items.ts: it applies the read's filters to the
+// stored rows, so the banner shows only this household's banks. lib/plaid-items.ts runs for real,
+// and needs only plaidEnv from lib/plaid.
+vi.mock('@/lib/supabase/admin', async () => {
+  const { plaidItemsQuery } = await import('../stubs/plaid-items')
+  return {
+    supabaseAdmin: {
+      from: (table: string) => {
+        if (table !== 'plaid_items') throw new Error(`transactions page read ${table} through the service-role client`)
+        started.push(table)
+        return plaidItemsQuery(results.plaid_items ?? { data: [], error: null }, gates.plaid_items)
+      },
+    },
+  }
+})
+vi.mock('@/lib/plaid', () => ({ plaidEnv: 'sandbox' }))
 // Categories and rules come through lib/category-context.ts (#28), whose own test covers paging.
 // Built from `results.categories` / `results.category_rules`, so a failed categories read still
 // rejects with the page's message.
 // The real module otherwise, so the page gets the real SUGGESTION_EMBED and the switch is read by
-// the real suggestionsEnabled (spec §14.7). Its admin client is never used here.
-vi.mock('@/lib/supabase/admin', () => ({ supabaseAdmin: {} }))
+// the real suggestionsEnabled (spec §14.7).
 vi.mock('@/lib/category-context', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/category-context')>()
   const { testData } = await import('./helpers/category-context')
   return {
     ...actual,
     fetchCategoryContext: async () => {
+      started.push('categories')
+      await gates.categories
       const c = results.categories ?? { data: [], error: null }
       if (c.error) throw new Error(`could not read categories: ${c.error.message}`)
       const r = results.category_rules ?? { data: [], error: null }
@@ -64,14 +112,32 @@ vi.mock('@/lib/category-context', async (importOriginal) => {
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
 
 import TransactionsPage from '@/app/(app)/transactions/page'
+import { MissingBalancesNote } from '@/components/MissingBalancesNote'
+import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import { TransactionCard } from '@/components/TransactionCard'
 import { TransactionRow } from '@/components/TransactionRow'
+import { Card } from '@/components/ui/Card'
+import { PageHeader } from '@/components/ui/PageHeader'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
+import { blocks, bannerText, balancesNote } from './helpers/banner'
+import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
 
 type Params = { q?: string; account?: string; category?: string; month?: string; flow?: string; page?: string }
 const render = (searchParams: Params = {}) =>
   TransactionsPage({ searchParams: Promise.resolve(searchParams) })
+
+// The household's one account, at storedItem()'s bank, so that bank's accounts are in (#170).
+const ACCOUNTS = [{ account_id: 'acc-1', name: '360 Checking', plaid_item_id: 'item-1' }]
+
+// Holds the read named `name` open until the test lets it go.
+function hold(name: string): () => void {
+  let release!: () => void
+  gates[name] = new Promise<void>((resolve) => (release = resolve))
+  return release
+}
+// One turn of the event loop, so every read the page can start without the held ones has started.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 // Same shapes as breakdown-page.test.tsx: a household Grocery with no PFC of its own, reached only
 // through a pick or the Safeway rule (#28).
@@ -96,11 +162,15 @@ const txn = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   for (const k of Object.keys(selects)) delete selects[k]
+  for (const k of Object.keys(gates)) delete gates[k]
+  started.length = 0
   vi.unstubAllEnvs()
+  results.memberships = { data: { household_id: 'hh-1' }, error: null }
+  results.plaid_items = { data: [], error: null }
   results.categories = { data: [FOOD, GROCERY], error: null }
   results.category_rules = { data: [SAFEWAY_RULE], error: null }
   results.accounts = {
-    data: [{ account_id: 'acc-1', name: '360 Checking' }],
+    data: ACCOUNTS,
     error: null,
   }
   results.transactions = {
@@ -388,5 +458,141 @@ describe('Transactions page dual layout', () => {
       results.accounts = { data: null, error: { message: 'permission denied' } }
       await expect(render()).rejects.toThrow(/could not read account names: permission denied/)
     })
+  })
+})
+
+// The dashboard's banner, above the list where a missing transaction gets noticed (#171). While a
+// bank isn't syncing its rows stop at its last sync, and without the banner nothing says why.
+describe('Transactions banks (#171)', () => {
+  it("warns that a bank isn't syncing, first, above the header", async () => {
+    results.accounts = { data: [...ACCOUNTS, { account_id: 'acc-2', name: 'Gold Card', plaid_item_id: 'item-2' }], error: null }
+    results.plaid_items = {
+      data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' }), ...FOREIGN_ITEMS],
+      error: null,
+    }
+    const tree = await render()
+    expect(bannerText(tree)).toBe(
+      "Capital One isn't syncing — reconnect in Settings to resume. These figures may be out of date."
+    )
+    const order = blocks(tree).map((b) => b.type)
+    expect(order.indexOf(NotSyncingBanner)).toBe(0)
+    expect(order.indexOf(NotSyncingBanner)).toBeLessThan(order.indexOf(PageHeader))
+  })
+
+  // Another household's broken bank, or this household's from the other Plaid environment, must
+  // not raise the banner here.
+  it("says nothing while every one of the household's banks is syncing", async () => {
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect(bannerText(await render())).toBe('')
+  })
+
+  // Rendered as no banks, a failed read would show a broken bank's list with no warning (#46). It
+  // throws, as the dashboard does, and app/(app)/error.tsx offers a retry.
+  it('fails loudly when the banks read fails, rather than hiding the banner', async () => {
+    results.plaid_items = { data: null, error: { message: 'statement timeout' } }
+    await expect(render()).rejects.toThrow(/could not read linked banks: statement timeout/)
+  })
+
+  it('fails loudly when the household read fails, rather than hiding the banner', async () => {
+    results.memberships = { data: null, error: { message: 'permission denied' } }
+    await expect(render()).rejects.toThrow(/could not read your household: permission denied/)
+  })
+
+  // An account with no membership, which sign-in lets through when it cannot check
+  // (lib/access.ts), has no household, so no banks. The page renders, as it did before it read
+  // banks, and reads none: the read is set to fail here, so reading it would throw.
+  it('renders for an account with no household, reading no banks', async () => {
+    results.memberships = { data: null, error: null }
+    results.plaid_items = { data: null, error: { message: 'read for no household' } }
+    expect(bannerText(await render())).toBe('')
+  })
+
+  // #156: the bank list is two reads, the household and then its banks, and neither may wait for
+  // the page's own, or the page's own for them. So both reads of each pair are held open at once,
+  // and both must have started: had either waited for the other, it could not have.
+  it("asks for the banks beside the page's own reads, neither waiting for the other", async () => {
+    const first = [hold('categories'), hold('memberships')]
+    const second = [hold('accounts'), hold('plaid_items')]
+    const page = render()
+    await settle()
+    expect(started).toContain('categories')
+    expect(started).toContain('memberships')
+    first.forEach((release) => release())
+    await settle()
+    expect(started).toContain('accounts')
+    expect(started).toContain('plaid_items')
+    second.forEach((release) => release())
+    await page
+  })
+})
+
+// #170: a bank whose first balance pull failed has no accounts, so none of its transactions can be
+// in this list: each needs its account's row. The dashboard's note says so above the list, with a
+// Refresh button, which this page has no other of.
+describe("Transactions before a bank's balances arrive (#170)", () => {
+  const amex = storedItem({ id: 'item-2', institution_name: 'Amex', created_at: '2026-07-15T09:00:00Z' })
+
+  it('notes the bank, with Refresh, after the banner and before the header', async () => {
+    results.plaid_items = { data: [storedItem(), amex], error: null }
+    const tree = await render()
+    expect(balancesNote(tree)).toEqual({
+      text: "Amex is connected, but its balances and transactions haven't arrived yet. Press Refresh to fetch them.",
+      refresh: true,
+    })
+    expect(blocks(tree).map((b) => b.type).slice(0, 3)).toEqual([NotSyncingBanner, MissingBalancesNote, PageHeader])
+  })
+
+  // Another household's bank, or this household's from the other Plaid environment, has no
+  // accounts here either, and is not this household's bank.
+  it("says nothing while every one of the household's banks has its accounts", async () => {
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect(balancesNote(await render())).toBeNull()
+  })
+})
+
+// #185: an unfiltered empty list said "Connect a bank" even with a bank linked, whose first
+// transactions can take hours to arrive. Linking it again spends one of ten lifetime connections
+// (#51), so only a household with no bank is told to connect one.
+describe('Transactions with none yet (#185)', () => {
+  beforeEach(() => {
+    results.transactions = { data: [], count: 0, error: null }
+  })
+  // What the empty list's card says.
+  const emptyText = (tree: unknown) => {
+    const card = walk(tree).find((d) => d.el.type === Card && d.el.props?.className === 'p-8 text-center')
+    return walk(card?.el.props?.children).find((d) => d.el.type === 'p')?.el.props?.children
+  }
+
+  it('says to connect a bank when the household has none', async () => {
+    expect(emptyText(await render())).toBe('No transactions yet. Connect a bank on the Dashboard.')
+  })
+
+  it("says a linked bank's transactions haven't arrived, and doesn't offer to connect one", async () => {
+    results.plaid_items = { data: [storedItem()], error: null }
+    expect(emptyText(await render())).toBe(
+      "Your bank is connected, but its transactions haven't arrived yet. They can take a few hours on a new connection."
+    )
+  })
+
+  it('says the same of several banks', async () => {
+    results.plaid_items = { data: [storedItem(), storedItem({ id: 'item-2', institution_name: 'Amex' })], error: null }
+    expect(emptyText(await render())).toBe(
+      "Your banks are connected, but their transactions haven't arrived yet. They can take a few hours on a new connection."
+    )
+  })
+
+  // Another household's bank, or this household's from the other Plaid environment, is not one of
+  // this household's.
+  it("still says to connect a bank when the only banks are another household's or the other environment's", async () => {
+    results.plaid_items = { data: FOREIGN_ITEMS, error: null }
+    expect(emptyText(await render())).toBe('No transactions yet. Connect a bank on the Dashboard.')
+  })
+
+  // A filtered view's empty list is about the filter, whatever banks there are.
+  it("keeps a filtered view's wording", async () => {
+    results.plaid_items = { data: [storedItem()], error: null }
+    expect(emptyText(await render({ month: '2026-08' }))).toBe(
+      'No transactions to show for this view. (Balances-only accounts like a mortgage have none.)'
+    )
   })
 })

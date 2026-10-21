@@ -1,4 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
+import { MissingBalancesNote } from '@/components/MissingBalancesNote'
+import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import { TransactionRow } from '@/components/TransactionRow'
 import { TransactionCard } from '@/components/TransactionCard'
 import { Card } from '@/components/ui/Card'
@@ -10,6 +12,8 @@ import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/ca
 import { resolveCategory } from '@/lib/category-rules'
 import { filterByCategory, filterByFlow } from '@/lib/category-views'
 import { buildSpendContext } from '@/lib/spend-context'
+import { currentHouseholdId } from '@/lib/household'
+import { listItemsForHousehold } from '@/lib/plaid-items'
 
 export default async function TransactionsPage({
   searchParams,
@@ -31,19 +35,27 @@ export default async function TransactionsPage({
   const inMemoryFiltered = !!(category || flow === 'in' || flow === 'out')
 
   const supabase = await createClient()
+  // The household beside the categories, and its banks beside the account names below: the bank
+  // list the "isn't syncing" banner needs (#135, #171) is two reads, and this way it adds no wait of
+  // its own (#156).
   // Throws on a failed read: with no categories every row would be relabelled 'Uncategorized' and
   // the category filter would match nothing (#46).
-  const data = await fetchCategoryContext()
+  const [data, householdId] = await Promise.all([fetchCategoryContext(), currentHouseholdId()])
   const categoryOptions = data.categories.map((c) => c.name)
 
   // account_id -> name, for the phone sheet's Account row (TransactionCard's accountName prop —
   // see spec: "when I tap a transaction, I expect to see the more tiles"). Twelve accounts is
   // nothing to fetch on every load. Not the same query as the single-account read below, which
   // names ONE account for the filter chip when drilling in from a Net Worth / Cash row — this one
-  // reads every account so each row can look its own up.
-  const { data: accountRows, error: accountRowsError } = await supabase
-    .from('accounts')
-    .select('account_id, name')
+  // reads every account so each row can look its own up, and with its bank, so the note can say
+  // which banks have none yet (#170).
+  // A failed bank read throws too: rendered as no banks, a broken bank's transactions would stop
+  // at its last sync with nothing to say why (#46). An account with no household has no banks,
+  // and none is read.
+  const [{ data: accountRows, error: accountRowsError }, items] = await Promise.all([
+    supabase.from('accounts').select('account_id, name, plaid_item_id'),
+    householdId ? listItemsForHousehold(householdId) : [],
+  ])
   if (accountRowsError) throw new Error(`could not read account names: ${accountRowsError.message}`)
   const accountNameById = new Map<string, string>()
   for (const a of accountRows ?? []) {
@@ -132,6 +144,9 @@ export default async function TransactionsPage({
 
   return (
     <div className="space-y-6">
+      <NotSyncingBanner items={items} />
+      {/* A bank with no accounts yet has no transactions here either: each needs its account (#170). */}
+      <MissingBalancesNote items={items} accounts={accountRows ?? []} />
       <PageHeader
         title="Transactions"
         subtitle="Search and re-categorize your spending."
@@ -180,10 +195,18 @@ export default async function TransactionsPage({
 
       {list.length === 0 ? (
         <Card className="p-8 text-center">
+          {/* Unfiltered and empty is either a household with no bank, or one whose bank hasn't
+              sent any yet, which can take hours after it is linked (#185). Only the first is told
+              to connect one: telling the second invites linking the same bank again, which spends
+              one of ten lifetime connections (#51). */}
           <p className="text-sm text-muted">
             {account || category || month || flow || safe || page > 1
               ? 'No transactions to show for this view. (Balances-only accounts like a mortgage have none.)'
-              : 'No transactions yet. Connect a bank on the Dashboard.'}
+              : items.length === 0
+                ? 'No transactions yet. Connect a bank on the Dashboard.'
+                : items.length === 1
+                  ? "Your bank is connected, but its transactions haven't arrived yet. They can take a few hours on a new connection."
+                  : "Your banks are connected, but their transactions haven't arrived yet. They can take a few hours on a new connection."}
           </p>
         </Card>
       ) : (

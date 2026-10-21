@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { BreakdownList, type BreakdownRow } from '@/components/BreakdownList'
+import { MissingBalancesNote } from '@/components/MissingBalancesNote'
 import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Card } from '@/components/ui/Card'
@@ -205,10 +206,10 @@ export default async function BreakdownPage({ params }: { params: Promise<{ metr
       ]
       total = { label: 'Saved this month', amount: m.income - m.spending, currency }
 
-      // The same window (AVERAGE_SAVED_MONTHS + 1), savedAverage, historyStart and banks as the
-      // dashboard tile, so the two cannot disagree. While a bank isn't syncing, its reason takes the
-      // average's place (#135).
-      const avg = savedAverage(flows, thisKey, await historyStart(), items)
+      // The same window (AVERAGE_SAVED_MONTHS + 1), savedAverage, historyStart, banks and accounts
+      // as the dashboard tile, so the two cannot disagree. While a bank isn't syncing, or has no
+      // accounts yet, its reason takes the average's place (#135, #170).
+      const avg = savedAverage(flows, thisKey, await historyStart(), items, accounts)
       average = avg.kind === 'unavailable' ? { reason: avg.reason } : {
         rows: [...avg.months].reverse().map((mo) => ({
           key: mo.key,
@@ -226,6 +227,9 @@ export default async function BreakdownPage({ params }: { params: Promise<{ metr
   return (
     <div className="space-y-6">
       <NotSyncingBanner items={items} />
+      {/* A bank with no accounts yet is missing from every metric: its balances, and its
+          transactions, which can't arrive before its accounts do (#170). */}
+      <MissingBalancesNote items={items} accounts={accounts} />
       <PageHeader title={header.title} subtitle={header.subtitle} />
       <Card className="p-5">
         <BreakdownList rows={rows} total={total} />

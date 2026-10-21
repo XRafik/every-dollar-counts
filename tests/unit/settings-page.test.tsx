@@ -271,7 +271,7 @@ describe('Settings: a failed read says so in its own card (#91)', () => {
     it('takes the first line from the bank list', async () => {
       results.plaid_items = { data: [capitalOne], error: null }
       const banks = card(await SettingsPage(), 'Banks')
-      expect(flatText(banks)).toContain("Capital One is connected, but its balances haven't arrived yet.")
+      expect(flatText(banks)).toContain("Capital One is connected, but its balances and transactions haven't arrived yet.")
       expect(flatText(banks)).not.toContain('No banks connected yet.')
       expect(findProps(banks, BankList)).toMatchObject({ items: [capitalOne] })
       expect(alertText(banks)).toBeNull()
@@ -280,22 +280,33 @@ describe('Settings: a failed read says so in its own card (#91)', () => {
     it('counts several banks whose balances have not arrived', async () => {
       results.plaid_items = { data: [capitalOne, { ...capitalOne, id: 'item-2', institution_name: 'Amex' }], error: null }
       expect(flatText(card(await SettingsPage(), 'Banks'))).toContain(
-        "2 banks are connected, but their balances haven't arrived yet."
+        "2 banks are connected, but their balances and transactions haven't arrived yet."
       )
     })
 
-    // #172: a bank that isn't syncing can't be counted on to send its balances (Refresh skips a
-    // broken login, and retries the rest without fixing what stopped them), so the line promises
-    // nothing for it. Its status line in the list below says what it needs.
-    it.each(['needs_reconnect', 'config_error', 'action_at_bank', 'temporarily_unavailable'])(
+    // #172: a bank Refresh can't help can't be counted on to send its balances (Refresh skips a
+    // broken login, and one that needs something done at the bank or to its setup fails again), so
+    // the line promises nothing for it. Its status line in the list below says what it needs.
+    it.each(['needs_reconnect', 'config_error', 'action_at_bank'])(
       'promises nothing for a bank that is %s',
       async (status) => {
         results.plaid_items = { data: [{ ...capitalOne, status }], error: null }
         const text = flatText(card(await SettingsPage(), 'Banks'))
-        expect(text).toContain("Capital One is connected, but its balances can't arrive until it's sorted out.")
+        expect(text).toContain("Capital One is connected, but its balances and transactions can't arrive until it's sorted out.")
         expect(text).not.toContain("haven't arrived")
       }
     )
+
+    // #186: Refresh retries a bank that didn't respond last time, as its status line below says
+    // ("Nothing to do — try Refresh later"), so the first line doesn't send it to be sorted out.
+    it("says a bank that only didn't respond last time is still on its way", async () => {
+      results.plaid_items = { data: [{ ...capitalOne, status: 'temporarily_unavailable' }], error: null }
+      const text = flatText(card(await SettingsPage(), 'Banks'))
+      expect(text).toContain(
+        "Capital One is connected, but its balances and transactions haven't arrived yet. It didn't respond last time."
+      )
+      expect(text).not.toContain('sorted out')
+    })
 
     it('counts several banks that are not syncing', async () => {
       results.plaid_items = {
@@ -303,14 +314,14 @@ describe('Settings: a failed read says so in its own card (#91)', () => {
         error: null,
       }
       expect(flatText(card(await SettingsPage(), 'Banks'))).toContain(
-        "2 banks are connected, but their balances can't arrive until they're sorted out."
+        "2 banks are connected, but their balances and transactions can't arrive until they're sorted out."
       )
     })
 
     it('with one bank syncing and one not, says which is on its way and which is not', async () => {
       results.plaid_items = { data: [capitalOne, { ...capitalOne, id: 'item-2', institution_name: 'Amex', status: 'needs_reconnect' }], error: null }
       expect(flatText(card(await SettingsPage(), 'Banks'))).toContain(
-        "Capital One is connected, but its balances haven't arrived yet. Amex is connected, but its balances can't arrive until it's sorted out."
+        "Capital One is connected, but its balances and transactions haven't arrived yet. Amex is connected, but its balances and transactions can't arrive until it's sorted out."
       )
     })
 

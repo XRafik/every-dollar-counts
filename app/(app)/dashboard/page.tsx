@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { AccountList } from '@/components/AccountList'
 import { LinkButton } from '@/components/LinkButton'
+import { MissingBalancesNote } from '@/components/MissingBalancesNote'
 import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import { RefreshButton } from '@/components/RefreshButton'
 import { SpendIncomeChart } from '@/components/SpendIncomeChart'
@@ -85,10 +86,12 @@ export default async function DashboardPage({
     // accounts for every bank it does not skip. Connect here would invite linking the same bank
     // again, which spends one of ten lifetime connections (#51), so it is never offered.
     //
-    // Only a bank that is syncing is promised its balances, with Refresh. One that isn't can't be
-    // counted on to send them (Refresh skips a broken login, and retries the rest without fixing
-    // what stopped them), so the card points to Settings for it instead. With both kinds, the card
-    // speaks for the syncing ones and the banner, first as always, for the rest.
+    // Only a bank Refresh can fetch from is promised its balances, with Refresh: one that is
+    // syncing, or whose bank only didn't respond last time, which Refresh retries (bySync, #186).
+    // The rest can't be counted on to send them (Refresh skips a broken login, and one that needs
+    // something done at the bank or to its setup fails again), so the card points to Settings for
+    // them instead. With both kinds, the card speaks for the first and the banner, first as always,
+    // for the rest.
     if (items.length > 0) {
       const { syncing, behind } = bySync(items)
       return (
@@ -186,7 +189,7 @@ export default async function DashboardPage({
   // so a partial fix could have had the label and the amount naming different months.
   const thisMonthLabel = monthNameLong(months[months.length - 1].key)
   const chartFlows = flows.slice(-6)
-  const avgSaved = savedAverage(flows, months[months.length - 1].key, await historyStart(), items)
+  const avgSaved = savedAverage(flows, months[months.length - 1].key, await historyStart(), items, accounts)
 
   const { data: budgetRows, error: budgetsError } = await supabase
     .from('budgets')
@@ -236,8 +239,10 @@ export default async function DashboardPage({
   )
   // No average line when there is no figure (the phone row shows money in and out instead):
   // neither layout has room to say why, and the saved breakdown it links to does. That includes a
-  // bank that isn't syncing (#135), which the banner above names. The month count keeps a one- or two-month "average" from passing for a
-  // settled one. Coral by the rounded figure, so a few cents below zero does not read as a red "$0".
+  // bank that isn't syncing (#135), which the banner above names, and one with no accounts yet
+  // (#170), which the note above names. The month count keeps a one- or two-month "average" from
+  // passing for a settled one. Coral by the rounded figure, so a few cents below zero does not read
+  // as a red "$0".
   const avgLine =
     avgSaved.kind === 'average' ? (
       <span className={`block ${Math.round(avgSaved.average) < 0 ? 'text-coral' : 'text-muted'}`}>
@@ -254,6 +259,10 @@ export default async function DashboardPage({
       )}
 
       <NotSyncingBanner items={items} />
+
+      {/* A bank with no accounts yet is missing from every figure below (#170). Its "Press Refresh"
+          means the header's button, so the note has none of its own. */}
+      <MissingBalancesNote items={items} accounts={accounts} refreshButton={false} />
 
       {homeStale && (
         <Link

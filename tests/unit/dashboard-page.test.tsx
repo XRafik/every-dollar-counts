@@ -8,7 +8,7 @@ const { results, tz, presentation, paged, history, selects } = vi.hoisted(() => 
   // What lib/history-start answers. Mocked so these tests can tell a page that takes the history
   // start from historyStart apart from one that guesses it from its own transaction read: this
   // stub serves the whole fixture to every query, so the two would otherwise always agree.
-  history: { value: { kind: 'none' } as { kind: 'ready'; month: string } | { kind: 'pending'; bank: string } | { kind: 'none' } },
+  history: { value: new Map() as ReadonlyMap<string, string | null> },
   results: {} as Record<string, { data: unknown; error: { message: string } | null }>,
   // When set, `transactions` is served by a PostgREST-like stub that caps each response at 1,000
   // rows, so the test can tell a paged read from a plain one (#69).
@@ -43,12 +43,18 @@ const chainFor = (table: string) => {
   return chain
 }
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: async () => ({
-    from: (table: string) =>
-      table === 'transactions' && paged.transactions ? paged.transactions.query() : chainFor(table),
-  }),
-}))
+// The signed-in client refuses plaid_items, which RLS gives it no rows of (#169).
+vi.mock('@/lib/supabase/server', async () => {
+  const { refuseSignedInPlaidItems } = await import('../stubs/plaid-items')
+  return {
+    createClient: async () => ({
+      from: (table: string) => {
+        refuseSignedInPlaidItems(table)
+        return table === 'transactions' && paged.transactions ? paged.transactions.query() : chainFor(table)
+      },
+    }),
+  }
+})
 // The service-role client answers from `results` too, so lib/manual-assets.ts and
 // lib/plaid-items.ts run for real and a failed read reaches the page as it would in production
 // (#91). plaid_items goes through the strict stand-in in tests/stubs/plaid-items.ts, which applies
@@ -113,10 +119,11 @@ vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value 
 
 import { pagedTable } from '../stubs/postgrest-pages'
 import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
-import { blocks, bannerText } from './helpers/banner'
+import { blocks, bannerText, balancesNote } from './helpers/banner'
 import DashboardPage from '@/app/(app)/dashboard/page'
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
+import { MissingBalancesNote } from '@/components/MissingBalancesNote'
 import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import Link from 'next/link'
 import { RefreshButton } from '@/components/RefreshButton'
@@ -128,6 +135,16 @@ import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
 
 const render = () => DashboardPage({ searchParams: Promise.resolve({}) })
+
+// An account at storedItem()'s bank, which every test starts with, and one at the second bank some
+// tests link. Each is that bank's balances being in (#170). The second moves no figure.
+const A1 = { id: 'a1', plaid_item_id: 'item-1', type: 'depository', current_balance: 100 }
+const A2 = { id: 'a2', plaid_item_id: 'item-2', type: 'credit', current_balance: 0 }
+
+// What historyStart answers: each bank's first transaction, by id. `since` has storedItem()'s bank's
+// history beginning in `month`; `waitingOn` has a bank whose first transactions haven't landed.
+const since = (month: string): ReadonlyMap<string, string | null> => new Map([['item-1', `${month}-10`]])
+const waitingOn = (itemId: string): ReadonlyMap<string, string | null> => new Map([[itemId, null]])
 
 // The exact moment from the #73 screenshot: 8:10pm on Wednesday 2 September in US Eastern, which
 // is already Thursday 3 September in UTC.
@@ -217,7 +234,7 @@ beforeEach(() => {
   tz.value = 'America/New_York'
   presentation.stampLabel = false
   // One account, so the page renders the money tiles rather than the empty state.
-  results.accounts = { data: [{ id: 'a1', type: 'depository', current_balance: 100 }], error: null }
+  results.accounts = { data: [A1], error: null }
   results.memberships = { data: { household_id: 'hh-1' }, error: null }
   results.categories = { data: [], error: null }
   results.category_rules = { data: [], error: null }
@@ -226,7 +243,7 @@ beforeEach(() => {
   results.manual_assets = { data: [], error: null }
   results.plaid_items = { data: [], error: null }
   paged.transactions = null
-  history.value = { kind: 'none' }
+  history.value = new Map()
   for (const k of Object.keys(selects)) delete selects[k]
   vi.unstubAllEnvs()
 })
@@ -237,6 +254,7 @@ afterEach(() => {
 
 describe('Dashboard banks (#135)', () => {
   it("warns that a bank isn't syncing, first, above the header", async () => {
+    results.accounts = { data: [A1, A2], error: null }
     results.plaid_items = {
       data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' }), ...FOREIGN_ITEMS],
       error: null,
@@ -307,7 +325,7 @@ describe('Dashboard before a bank\'s balances arrive (#164)', () => {
     const tree = await render()
     const text = textOf(tree).replace(/\s+/g, ' ')
     expect(text).toContain('Your balances are on their way')
-    expect(text).toContain("Capital One is connected, but its balances haven't arrived yet. Press Refresh to fetch them.")
+    expect(text).toContain("Capital One is connected, but its balances and transactions haven't arrived yet. Press Refresh to fetch them.")
     expect(text).not.toContain('Connect your first account')
     expect(renders(tree, RefreshButton)).toBe(true)
     expect(renders(tree, LinkButton)).toBe(false)
@@ -316,14 +334,14 @@ describe('Dashboard before a bank\'s balances arrive (#164)', () => {
   it('counts several banks whose balances have not arrived', async () => {
     results.plaid_items = { data: [storedItem(), storedItem({ id: 'item-2', institution_name: 'Amex', created_at: '2026-07-15T09:00:00Z' })], error: null }
     expect(textOf(await render()).replace(/\s+/g, ' ')).toContain(
-      "2 banks are connected, but their balances haven't arrived yet."
+      "2 banks are connected, but their balances and transactions haven't arrived yet."
     )
   })
 
   it('says "Your bank" when the bank has no name', async () => {
     results.plaid_items = { data: [storedItem({ institution_name: null })], error: null }
     expect(textOf(await render()).replace(/\s+/g, ' ')).toContain(
-      "Your bank is connected, but its balances haven't arrived yet."
+      "Your bank is connected, but its balances and transactions haven't arrived yet."
     )
   })
 
@@ -340,18 +358,18 @@ describe('Dashboard before a bank\'s balances arrive (#164)', () => {
     expect(order.indexOf(PageHeader)).toBe(1)
   })
 
-  // #172: a bank that isn't syncing can't be counted on to send its balances. Refresh skips a broken
-  // login and retries the rest without fixing what stopped them, so "on their way" and "Press
-  // Refresh" would be a promise it can't keep. The card promises nothing and points to Settings,
-  // and still never offers Connect.
-  it.each(['needs_reconnect', 'config_error', 'action_at_bank', 'temporarily_unavailable'])(
+  // #172: a bank Refresh can't help can't be counted on to send its balances. Refresh skips a broken
+  // login, and one that needs something done at the bank or to its setup fails again, so "on their
+  // way" and "Press Refresh" would be a promise it can't keep. The card promises nothing and points
+  // to Settings, and still never offers Connect.
+  it.each(['needs_reconnect', 'config_error', 'action_at_bank'])(
     'promises nothing for a bank that is %s, and points to Settings instead of Refresh',
     async (status) => {
       results.plaid_items = { data: [storedItem({ status })], error: null }
       const tree = await render()
       const { text, card } = emptyCard(tree)
       expect(text).toBe(
-        "Your bank needs attention Capital One is connected, but its balances can't arrive until it's sorted out in Settings. Go to Settings"
+        "Your bank needs attention Capital One is connected, but its balances and transactions can't arrive until it's sorted out in Settings. Go to Settings"
       )
       expect(findElement(card, Link)?.props.href).toBe('/settings')
       expect(renders(tree, RefreshButton)).toBe(false)
@@ -359,13 +377,26 @@ describe('Dashboard before a bank\'s balances arrive (#164)', () => {
     }
   )
 
+  // #186: Refresh simply retries a bank that didn't respond last time, so its balances are on their
+  // way, with the reason and Refresh. The banner above still says it isn't syncing.
+  it("promises the balances of a bank that only didn't respond last time, with Refresh", async () => {
+    results.plaid_items = { data: [storedItem({ status: 'temporarily_unavailable' })], error: null }
+    const tree = await render()
+    expect(emptyCard(tree).text).toBe(
+      "Your balances are on their way Capital One is connected, but its balances and transactions haven't arrived yet. It didn't respond last time. Press Refresh to fetch them."
+    )
+    expect(renders(tree, RefreshButton)).toBe(true)
+    expect(renders(tree, LinkButton)).toBe(false)
+    expect(bannerText(tree)).toBe("Capital One isn't syncing — see Settings. These figures may be out of date.")
+  })
+
   it('says how many banks need attention when none of them is syncing', async () => {
     results.plaid_items = {
       data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex', status: 'config_error' })],
       error: null,
     }
     expect(emptyCard(await render()).text).toBe(
-      "Your banks need attention 2 banks are connected, but their balances can't arrive until they're sorted out in Settings. Go to Settings"
+      "Your banks need attention 2 banks are connected, but their balances and transactions can't arrive until they're sorted out in Settings. Go to Settings"
     )
   })
 
@@ -378,7 +409,7 @@ describe('Dashboard before a bank\'s balances arrive (#164)', () => {
     }
     const tree = await render()
     expect(emptyCard(tree).text).toBe(
-      "Your balances are on their way Capital One is connected, but its balances haven't arrived yet. Press Refresh to fetch them."
+      "Your balances are on their way Capital One is connected, but its balances and transactions haven't arrived yet. Press Refresh to fetch them."
     )
     expect(renders(tree, RefreshButton)).toBe(true)
     expect(renders(tree, LinkButton)).toBe(false)
@@ -406,6 +437,64 @@ describe('Dashboard before a bank\'s balances arrive (#164)', () => {
     const text = textOf(await render())
     expect(text).toContain('Good evening')
     expect(text).toContain('Wednesday, September 2')
+  })
+})
+
+// #170: the same state with another bank's accounts in. Net worth and cash on hand are sums over
+// accounts, so they leave the new bank out and look complete. A note says so, with the notices
+// above the header, and the figures stay.
+describe("Dashboard before a second bank's balances arrive (#170)", () => {
+  const amex = (over: Record<string, unknown> = {}) =>
+    storedItem({ id: 'item-2', institution_name: 'Amex', created_at: '2026-07-15T09:00:00Z', ...over })
+
+  it("notes the bank whose balances haven't arrived, after the banner and before the header", async () => {
+    results.plaid_items = { data: [storedItem(), amex()], error: null }
+    const tree = await render()
+    const note = balancesNote(tree)
+    expect(note?.text).toBe("Amex is connected, but its balances and transactions haven't arrived yet. Press Refresh to fetch them.")
+    const order = blocks(tree).map((b) => b.type)
+    expect(order.indexOf(MissingBalancesNote)).toBe(order.indexOf(NotSyncingBanner) + 1)
+    expect(order.indexOf(MissingBalancesNote)).toBeLessThan(order.indexOf(PageHeader))
+    expect(findStatCards(tree).map((c) => c.props.label)).toContain('Net worth')
+  })
+
+  // "Press Refresh" means the header's button, just below: a second one in the note would be two
+  // buttons for one action, one screen apart.
+  it("points to the header's Refresh rather than offering one of its own", async () => {
+    results.plaid_items = { data: [storedItem(), amex()], error: null }
+    const tree = await render()
+    expect(balancesNote(tree)?.refresh).toBe(false)
+    expect(renders(findElement(tree, PageHeader)!.props.actions, RefreshButton)).toBe(true)
+  })
+
+  // The bank comes before the house: a reminder to update a figure that is in can wait for one that
+  // is missing.
+  it('comes before the home value reminder', async () => {
+    results.plaid_items = { data: [storedItem(), amex()], error: null }
+    results.manual_assets = { data: [{ id: 'm1', name: 'Home', value: 500000, updated_at: '2026-07-01T00:00:00Z' }], error: null }
+    const tree = await render()
+    const kids = blocks(tree)
+    const home = kids.findIndex((b) => textOf(b).includes('Your home value was last updated'))
+    expect(home).toBeGreaterThan(-1)
+    expect(kids.findIndex((b) => b.type === MissingBalancesNote)).toBe(home - 1)
+  })
+
+  // Another household's bank, or this household's from the other Plaid environment, has no
+  // accounts here either, and is not this household's bank.
+  it('says nothing while every one of the household\'s banks has its accounts', async () => {
+    results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect(balancesNote(await render())).toBeNull()
+  })
+
+  // Refresh skips a broken login, so the note promises nothing and the banner above it sends the
+  // reader to Settings.
+  it("promises nothing for a bank that isn't syncing", async () => {
+    results.plaid_items = { data: [storedItem(), amex({ status: 'needs_reconnect' })], error: null }
+    const tree = await render()
+    expect(balancesNote(tree)?.text).toBe(
+      "Amex is connected, but its balances and transactions can't arrive until it's sorted out in Settings."
+    )
+    expect(bannerText(tree)).toBe("Amex isn't syncing — reconnect in Settings to resume. These figures may be out of date.")
   })
 })
 
@@ -439,7 +528,7 @@ describe('Dashboard average savings (#126)', () => {
   it('shows the mean over the complete months, and how many', async () => {
     results.categories = income
     results.transactions = fixture()
-    history.value = { kind: 'ready', month: '2026-02' }
+    history.value = since('2026-02')
     expect((await avgLine())!.props.children).toBe('Avg $3,000/mo · 6 mo')
   })
 
@@ -448,15 +537,15 @@ describe('Dashboard average savings (#126)', () => {
   it('starts where historyStart says, not at the earliest transaction it read', async () => {
     results.categories = income
     results.transactions = fixture()
-    history.value = { kind: 'ready', month: '2026-05' }
+    history.value = since('2026-05')
     expect((await avgLine())!.props.children).toBe('Avg $2,000/mo · 3 mo')
   })
 
   it.each([
-    ['history is in but no full month has followed it', { kind: 'ready', month: '2026-08' }],
-    ['a bank has not delivered its history yet', { kind: 'pending', bank: 'Capital One' }],
-    ['there are no transactions', { kind: 'none' }],
-  ] as const)('shows no line when %s', async (_, state) => {
+    ['history is in but no full month has followed it', since('2026-08')],
+    ['a bank has not delivered its history yet', waitingOn('item-1')],
+    ['there are no transactions', new Map()],
+  ])('shows no line when %s', async (_, state) => {
     results.categories = income
     results.transactions = fixture()
     history.value = state
@@ -465,7 +554,7 @@ describe('Dashboard average savings (#126)', () => {
 
   it('is coral when the household loses money on average, and only then', async () => {
     results.categories = income
-    history.value = { kind: 'ready', month: '2026-02' }
+    history.value = since('2026-02')
     results.transactions = fixture({ '03': -2000, '04': -2000, '05': -2000, '06': -2000, '07': -2000, '08': -2000 })
     const losing = (await avgLine())!
     expect(losing.props.children).toBe('Avg -$2,000/mo · 6 mo')
@@ -478,7 +567,7 @@ describe('Dashboard average savings (#126)', () => {
   // A few cents below zero rounds to "$0"; a red $0 would be noise.
   it('is not coral when the average rounds to zero', async () => {
     results.categories = income
-    history.value = { kind: 'ready', month: '2026-07' }
+    history.value = since('2026-07')
     results.transactions = fixture({ '08': -0.3 })
     const line = (await avgLine())!
     expect(line.props.className).not.toContain('text-coral')
@@ -489,7 +578,7 @@ describe('Dashboard average savings (#126)', () => {
   it('agrees with the saved breakdown it links to', async () => {
     results.categories = income
     results.transactions = fixture({ '05': 3100, '07': -450.4 })
-    history.value = { kind: 'ready', month: '2026-03' }
+    history.value = since('2026-03')
     const tile = (await avgLine())!.props.children
     const breakdown = await BreakdownPage({ params: Promise.resolve({ metric: 'saved' }) })
     const lists: { total?: { amount: number }; rows: unknown[] }[] = []
@@ -522,7 +611,7 @@ describe('Dashboard average savings (#126)', () => {
   it('gives the phone rows the same figures and links as the tiles', async () => {
     results.categories = income
     results.transactions = fixture()
-    history.value = { kind: 'ready', month: '2026-02' }
+    history.value = since('2026-02')
     const { tree, rows } = await phoneRows()
     const tiles = findStatCards(tree).filter((c) => c.props.label !== 'Net worth')
     expect(rows.map((r) => [r.label, r.amount])).toEqual(tiles.map((t) => [t.props.label, t.props.amount]))
@@ -532,10 +621,10 @@ describe('Dashboard average savings (#126)', () => {
   it('puts the average in the Saved row, and money in and out when there is no average', async () => {
     results.categories = income
     results.transactions = fixture()
-    history.value = { kind: 'ready', month: '2026-02' }
+    history.value = since('2026-02')
     expect(textOf((await phoneRows()).rows[2].foot)).toContain('Avg $3,000/mo · 6 mo')
 
-    history.value = { kind: 'pending', bank: 'Capital One' }
+    history.value = waitingOn('item-1')
     const foot = textOf((await phoneRows()).rows[2].foot)
     expect(foot).not.toContain('Avg')
     expect(foot.replace(/\s+/g, ' ')).toContain('$0 in · $5,000 out')
@@ -547,7 +636,8 @@ describe('Dashboard average savings (#126)', () => {
   it("shows no average while a bank isn't syncing, on the tile or the phone row", async () => {
     results.categories = income
     results.transactions = fixture()
-    history.value = { kind: 'ready', month: '2026-02' }
+    history.value = since('2026-02')
+    results.accounts = { data: [A1, A2], error: null }
     results.plaid_items = { data: [storedItem({ status: 'needs_reconnect' }), storedItem({ id: 'item-2', institution_name: 'Amex' })], error: null }
     expect(await avgLine()).toBeUndefined()
     const foot = textOf((await phoneRows()).rows[2].foot)
@@ -559,8 +649,27 @@ describe('Dashboard average savings (#126)', () => {
   it("keeps the average when only another household's bank, or one from the other environment, is broken", async () => {
     results.categories = income
     results.transactions = fixture()
-    history.value = { kind: 'ready', month: '2026-02' }
+    history.value = since('2026-02')
     results.plaid_items = { data: [storedItem(), ...FOREIGN_ITEMS], error: null }
+    expect((await avgLine())!.props.children).toBe('Avg $3,000/mo · 6 mo')
+  })
+
+  // #170: a second bank whose first balance pull failed has no accounts, so none of its
+  // transactions either, and every month is short of it. Neither layout has room to say why; the
+  // note above the header names the bank, and the saved breakdown gives the reason. The average
+  // comes back once the bank has an account.
+  it("shows no average while a bank's balances haven't arrived, on the tile or the phone row", async () => {
+    results.categories = income
+    results.transactions = fixture()
+    history.value = since('2026-02')
+    results.plaid_items = {
+      data: [storedItem(), storedItem({ id: 'item-2', institution_name: 'Amex', created_at: '2026-07-15T09:00:00Z' })],
+      error: null,
+    }
+    expect(await avgLine()).toBeUndefined()
+    expect(textOf((await phoneRows()).rows[2].foot)).not.toContain('Avg')
+
+    results.accounts = { data: [A1, A2], error: null }
     expect((await avgLine())!.props.children).toBe('Avg $3,000/mo · 6 mo')
   })
 
