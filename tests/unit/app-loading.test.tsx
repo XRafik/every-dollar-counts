@@ -34,7 +34,10 @@ describe('app/(app)/loading.tsx', () => {
     for (const el of container.querySelectorAll('*')) {
       const classes = el.getAttribute('class')?.split(/\s+/) ?? []
       expect(classes.filter((c) => /^(fixed|sticky|absolute|w-screen|h-screen|min-h-screen)$/.test(c))).toEqual([])
-      if (classes.some((c) => /^w-\d+$/.test(c))) expect(classes).toContain('max-w-full')
+      // A minimum width beats max-w-full in CSS, so there is none beyond zero.
+      expect(classes.filter((c) => /^min-w-/.test(c) && c !== 'min-w-0')).toEqual([])
+      // A fixed width, as w-40 or w-[600px], only alongside max-w-full, which caps it at the page.
+      if (classes.some((c) => /^w-(\d+(\.\d+)?|\[[^\]]+\]|px)$/.test(c))) expect(classes).toContain('max-w-full')
     }
   })
 })
