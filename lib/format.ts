@@ -4,8 +4,8 @@ export function money(amount: number | null | undefined, currency = 'USD'): stri
 
 // money() without the cents, for the dashboard's phone figures (spec §4): StatRows' figures and
 // their notes, and the saved average, which the desktop tile's note shows too. Rounding is a
-// DISPLAY choice: no stored figure and no computed total passes through here. Intl rounds
-// half-away-from-zero, which is what a reader glancing at a figure expects.
+// DISPLAY choice: what this returns is only ever shown, never stored or added into a total. Intl
+// rounds half-away-from-zero, which is what a reader glancing at a figure expects.
 export function moneyWhole(amount: number | null | undefined, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',

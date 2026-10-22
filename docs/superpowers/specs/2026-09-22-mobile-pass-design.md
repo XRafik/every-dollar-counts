@@ -185,6 +185,8 @@ This treats the tiles by importance rather than equally, which matches the state
 
 **Rounding is display-only.** It happens in the tile, never in the value passed to it, and never on the desktop layout.
 
+> **Note (#137):** Two things here and in §9 no longer hold. Rounding is still display-only, but not phone-only: since #126 the saved average is whole dollars on the desktop tile too ("Avg $3,822/mo"). And the compact tile no longer rounds: it shows only from `md` up, and since #137 its figure is exact, so §9's "rounded value in a compact slot" is now StatRows' whole-dollar figures, on the phone.
+
 The remaining dashboard sections stack in the order they already have: the spend/income chart, recent activity, then accounts. The account card list is long — 12 today — so below `md` it shows the first 4 behind a **"Show all N"** control, N being whatever the household actually has. Accounts are reference material rather than the reason the page was opened.
 
 ---
@@ -259,6 +261,8 @@ Stage 2 is deliberately early despite being small: it is one number on the scree
 The existing suite is 338 tests and **none of them cover layout**, which is why §1.3 regressed after being fixed. Layout assertions in jsdom are largely theatre — it does not do layout — so the tests here target the things that are actually decidable:
 
 - **`StatCard` renders the exact value in the hero slot and a rounded value in a compact slot.** This is a formatting assertion, not a width one, and it is the assertion that would have caught §1.3 regressing had the tile been given a variant.
+
+  > **Note (#137):** Since #137 both slots are exact: the compact tile shows only from `md` up, and the rounded figures on a phone are StatRows', which tests/unit/stat-rows.test.tsx asserts. See the note under §4's rounding rule.
 - **The phone row and the desktop row derive from one source.** Both presentations must consume the same `effectiveCategory`, the same `display = -amount` convention, and the same `isCreditCardPayment` predicate. A test asserts the two render identical category, amount and card-payment state for the same transaction. **This is how §2's accepted duplication cost is contained** — the markup may differ, the meaning may not.
 - **The sheet honours the card-payment exemption.** Given a `LOAN_PAYMENTS_CREDIT_CARD_PAYMENT` transaction with no `user_category`, the sheet offers no category picker, no checkbox and no editor. This guards the $7,866.69 failure documented at `TransactionRow.tsx:48-58`.
 - **Trends caps at six categories plus Other below `md`, and Other's amount equals the sum of the remainder.** A pure function over the rows; no rendering required.

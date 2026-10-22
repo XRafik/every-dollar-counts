@@ -133,6 +133,8 @@ import { RefreshButton } from '@/components/RefreshButton'
 import { LinkButton } from '@/components/LinkButton'
 import { Card } from '@/components/ui/Card'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
+import type { ReactNode } from 'react'
 import { moneyWhole } from '@/lib/format'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
@@ -174,22 +176,31 @@ type StatCardProps = {
   foot?: unknown
 }
 
-function findStatCards(node: unknown): { props: StatCardProps }[] {
-  const found: { props: StatCardProps }[] = []
-  const walk = (n: unknown) => {
-    if (n == null || typeof n !== 'object') return
-    if (Array.isArray(n)) {
-      n.forEach(walk)
-      return
-    }
-    const el = n as { type?: unknown; props?: { children?: unknown } }
-    if (typeof el.type === 'function' && (el.type as { name?: string }).name === 'StatCard') {
-      found.push(el as unknown as { props: StatCardProps })
-    }
-    if (el.props?.children) walk(el.props.children)
+// Every element in the returned tree, reached through any prop, not only `children`: an element
+// handed to another as a prop renders all the same. Plain objects and arrays in props are walked
+// too, as StatRows' rows carry elements in their `foot`.
+type TreeElement = { type?: unknown; props: Record<string, unknown> }
+function elementsOf(node: unknown): TreeElement[] {
+  const found: TreeElement[] = []
+  const seen = new WeakSet<object>()
+  const walk = (n: unknown): void => {
+    if (n == null || typeof n !== 'object' || seen.has(n)) return
+    seen.add(n)
+    if (Array.isArray(n)) return n.forEach(walk)
+    const el = n as { $$typeof?: unknown; props?: Record<string, unknown> }
+    if (el.$$typeof === undefined) return Object.values(n).forEach(walk)
+    if (!el.props) return
+    found.push(el as TreeElement)
+    Object.values(el.props).forEach(walk)
   }
   walk(node)
   return found
+}
+
+function findStatCards(node: unknown): { props: StatCardProps }[] {
+  return elementsOf(node).filter(
+    (el) => typeof el.type === 'function' && (el.type as { name?: string }).name === 'StatCard'
+  ) as unknown as { props: StatCardProps }[]
 }
 
 // The items the page hands to <RecentActivity>. The list itself is not rendered here — this reads
@@ -735,19 +746,27 @@ describe('Dashboard average savings (#126)', () => {
   // compact too, and so is a hero that loses its `variant="hero"`.
   it('keeps every StatCard but the hero under the wrapper hidden below md', async () => {
     const tree = await render()
-    const wrappers: unknown[] = []
-    const walk = (n: unknown): void => {
-      if (n == null || typeof n !== 'object') return
-      if (Array.isArray(n)) return n.forEach(walk)
-      const el = n as { props?: { className?: unknown; children?: unknown } }
-      if (el.props?.className === 'hidden md:contents') wrappers.push(el)
-      if (el.props?.children) walk(el.props.children)
-    }
-    walk(tree)
+    const wrappers = elementsOf(tree).filter((el) => el.props.className === 'hidden md:contents')
     expect(wrappers).toHaveLength(1)
     const inWrapper = findStatCards(wrappers[0])
     const outside = findStatCards(tree).filter((c) => !inWrapper.includes(c))
     expect(outside.map((c) => c.props.variant)).toEqual(['hero'])
+  })
+
+  // The test above walks every prop, so a tile handed to an element as a prop, which renders all the
+  // same, is counted where it sits rather than slipping past.
+  it('finds a tile handed to another element as a prop', () => {
+    function Slot({ tile }: { tile: ReactNode }) {
+      return <section>{tile}</section>
+    }
+    const tile = <StatCard label="Cash on hand" amount={1} />
+    const found = findStatCards(
+      <div>
+        <Slot tile={tile} />
+      </div>
+    )
+    expect(found).toHaveLength(1)
+    expect(found[0]).toBe(tile)
   })
 
   // The read is seven months; the chart under "Last 6 months" must still get six.
