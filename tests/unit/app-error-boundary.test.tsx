@@ -4,6 +4,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import type { ErrorInfo } from 'next/dist/client/components/error-boundary'
 import AppSegmentError from '@/app/(app)/error'
 import RootError from '@/app/error'
+import { expectTapTarget } from './helpers/tap-target'
 
 afterEach(() => {
   cleanup()
@@ -65,6 +66,14 @@ describe('app/(app)/error.tsx', () => {
     const props: NextErrorProps = { error: new Error('boom'), reset: vi.fn(), retry: vi.fn() }
     render(<AppSegmentError {...props} />)
     expect(screen.queryByText(/^Error ID/)).toBeNull()
+  })
+
+  // #122: the retry is the whole way back from a failed read, and it was a 20px text button.
+  it('gives "Try again" a 44px hit area on a phone', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const props: NextErrorProps = { error: new Error('boom'), reset: vi.fn(), retry: vi.fn() }
+    render(<AppSegmentError {...props} />)
+    expectTapTarget(screen.getByRole('button', { name: 'Try again' }).className)
   })
 })
 
@@ -133,5 +142,14 @@ describe('app/error.tsx', () => {
     const props: NextErrorProps = { error: serverError('1638223470'), reset: vi.fn(), retry: vi.fn() }
     render(<RootError {...props} />)
     expect(logged).toHaveBeenCalledWith(props.error)
+  })
+
+  // #122, as for app/(app)/error.tsx: this page has no shell around it, so on a phone the retry is
+  // its only control.
+  it('gives "Try again" a 44px hit area on a phone', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const props: NextErrorProps = { error: serverError('1638223470'), reset: vi.fn(), retry: vi.fn() }
+    render(<RootError {...props} />)
+    expectTapTarget(screen.getByRole('button', { name: 'Try again' }).className)
   })
 })

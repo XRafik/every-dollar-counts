@@ -4,6 +4,7 @@ import { TransactionCard } from '@/components/TransactionCard'
 import { TransactionRow } from '@/components/TransactionRow'
 import { SAVE_TIMEOUT_MS } from '@/lib/save-response'
 import { neverSettles, useFakeSaveClock } from './helpers/save-replies'
+import { expectTapTarget } from './helpers/tap-target'
 
 afterEach(() => {
   cleanup()
@@ -687,6 +688,13 @@ describe('TransactionCard learned marker (#28)', () => {
     fireEvent.click(screen.getByRole('button', { name: /edit/ }))
     expect(screen.getByText(/Learned from Joe S Den\./)).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Manage in Settings', hidden: true }).getAttribute('href')).toBe('/settings#category-rules')
+  })
+
+  // #122's comment: this sheet is the phone's, where §7 asks for 44px, and the link was 16px tall.
+  it('gives Manage in Settings a 44px hit area', () => {
+    render(<TransactionCard t={txn} category={learned} categoryOptions={['Food', 'Grocery']} />)
+    fireEvent.click(screen.getByRole('button', { name: /edit/ }))
+    expectTapTarget(screen.getByRole('link', { name: 'Manage in Settings', hidden: true }).className)
   })
 
   // Done is withheld while a save is in flight so its failure is seen; the link must not be a

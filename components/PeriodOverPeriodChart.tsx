@@ -13,6 +13,7 @@ import {
 } from 'recharts'
 import { CHART_SERIES } from '@/lib/chart-palette'
 import { capCategories } from '@/lib/trends'
+import { tapTargetClass } from '@/components/ui/styles'
 
 // Two equal windows side by side, per category. The keys stay `current`/`previous`; the window
 // names arrive as `name` on each Bar, which is what Legend and Tooltip display. They used to be
@@ -85,7 +86,7 @@ export function PeriodOverPeriodChart({
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="mt-2 text-sm font-medium text-emerald hover:text-emerald-600 md:hidden"
+          className={`${tapTargetClass} mt-2 text-sm font-medium text-emerald hover:text-emerald-600 md:hidden`}
         >
           {expanded ? 'Show fewer' : `Show all ${data.length} categories`}
         </button>

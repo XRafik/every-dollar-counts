@@ -2,6 +2,7 @@
 
 import { useState, type ComponentProps } from 'react'
 import { AccountCard } from './AccountCard'
+import { tapTargetClass } from './ui/styles'
 
 // How many accounts are worth the thumb below `md`. Accounts are reference material rather than
 // the reason the page was opened (§4), and the household has twelve.
@@ -44,7 +45,7 @@ export function AccountList({ accounts }: { accounts: Account[] }) {
           type="button"
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
-          className="text-sm font-medium text-emerald hover:text-emerald-600 md:hidden"
+          className={`${tapTargetClass} text-sm font-medium text-emerald hover:text-emerald-600 md:hidden`}
         >
           {expanded ? 'Show fewer' : `Show all ${accounts.length}`}
         </button>

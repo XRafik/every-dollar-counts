@@ -9,6 +9,7 @@ import { SpendIncomeChart } from '@/components/SpendIncomeChart'
 import { RecentActivity } from '@/components/RecentActivity'
 import { Card } from '@/components/ui/Card'
 import { buttonClass } from '@/components/ui/Button'
+import { tapTargetClass } from '@/components/ui/styles'
 import { StatCard } from '@/components/ui/StatCard'
 import { StatRows } from '@/components/ui/StatRows'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -395,7 +396,7 @@ export default async function DashboardPage({
             <h2 className="text-base font-semibold text-ink">Recent activity</h2>
             <Link
               href="/transactions"
-              className="text-xs font-medium text-emerald hover:text-emerald-600"
+              className={`${tapTargetClass} text-xs font-medium text-emerald hover:text-emerald-600`}
             >
               View all
             </Link>

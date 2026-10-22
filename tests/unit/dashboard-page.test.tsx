@@ -120,6 +120,7 @@ vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value 
 import { pagedTable } from '../stubs/postgrest-pages'
 import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
 import { blocks, bannerText, balancesNote } from './helpers/banner'
+import { controlWithText, expectTapTarget } from './helpers/tap-target'
 import DashboardPage from '@/app/(app)/dashboard/page'
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
@@ -1146,4 +1147,12 @@ describe('Dashboard clock', () => {
     expect(text).toContain('Good evening')
     expect(text).not.toContain('Good morning')
   })
+})
+
+// #122's comment: Recent activity's "View all" is a text-xs link, shown at every width, and was
+// under §7's 44px on a phone. Its row grows to 44px there; from `md` up it is as it was.
+it("gives Recent activity's View all a 44px hit area on a phone", async () => {
+  const viewAll = controlWithText(await render(), 'View all')
+  expect(viewAll.props.href).toBe('/transactions')
+  expectTapTarget(viewAll.props.className)
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { inputClass, selectClass } from '@/components/ui/styles'
+import { inputClass, selectClass, tapTargetClass } from '@/components/ui/styles'
 import { buttonClass } from '@/components/ui/Button'
+import { expectTapTarget } from './helpers/tap-target'
 
 // §7: "Every form control goes full width with a minimum 44px tap height." Measured before this
 // change: inputClass ≈38px (py-2 + text-sm), selectClass ≈34px (py-1.5), buttonClass 32px (h-8)
@@ -51,5 +52,16 @@ describe('control tap targets', () => {
   it('keeps the two button sizes distinct above md', () => {
     expect(buttonClass('primary', 'sm')).not.toContain('md:h-10')
     expect(buttonClass('primary', 'md')).not.toContain('md:h-8')
+  })
+
+  // #122: the text links and text buttons ("Show all", "Try again", paging) bypassed the three
+  // classes above and were 16-20px tall on a phone. The shared fourth class grows the hit area and
+  // nothing else: no font size, padding or colour, so the text looks as it did.
+  it('gives a text control a 44px hit area below md and releases it at md', () => {
+    expectTapTarget(tapTargetClass)
+  })
+
+  it('leaves the text itself alone', () => {
+    expect(tapTargetClass).toBe('inline-flex min-h-[44px] min-w-[44px] items-center md:min-h-0 md:min-w-0')
   })
 })

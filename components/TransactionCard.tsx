@@ -8,6 +8,7 @@ import { money, shortDate } from '@/lib/format'
 import { presentTransaction, TONE_CLASS } from '@/lib/transaction-presentation'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
+import { tapTargetClass } from '@/components/ui/styles'
 import { CategoryPicker } from '@/components/CategoryPicker'
 import { learnedText } from '@/components/LearnedMarker'
 import { suggestedText } from '@/components/SuggestedMarker'
@@ -191,7 +192,7 @@ export function TransactionCard({
                         {!busy && (
                           <>
                             {' '}
-                            <Link href="/settings#category-rules" className="font-medium text-emerald hover:text-emerald-600">
+                            <Link href="/settings#category-rules" className={`${tapTargetClass} font-medium text-emerald hover:text-emerald-600`}>
                               Manage in Settings
                             </Link>
                           </>

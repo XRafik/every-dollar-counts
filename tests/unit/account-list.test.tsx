@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { AccountList } from '@/components/AccountList'
+import { expectTapTarget } from './helpers/tap-target'
 
 afterEach(cleanup)
 
@@ -106,6 +107,12 @@ describe('AccountList', () => {
   it('keeps the control off the desktop layout', () => {
     render(<AccountList accounts={accounts} />)
     expect(screen.getByRole('button', { name: 'Show all 12' }).className).toContain('md:hidden')
+  })
+
+  // #122: the control exists only on a phone, where §7 asks for 44px, and it was 20px tall there.
+  it('gives the control a 44px hit area', () => {
+    render(<AccountList accounts={accounts} />)
+    expectTapTarget(screen.getByRole('button', { name: 'Show all 12' }).className)
   })
 
   // This string used to live in app/(app)/dashboard/page.tsx and came across untouched. Moving a

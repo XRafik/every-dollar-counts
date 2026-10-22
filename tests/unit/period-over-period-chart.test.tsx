@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { PeriodOverPeriodChart } from '@/components/PeriodOverPeriodChart'
 import { CHART_SERIES } from '@/lib/chart-palette'
+import { expectTapTarget } from './helpers/tap-target'
 
 // Auto-cleanup only registers when vitest runs with globals; this suite does not.
 afterEach(cleanup)
@@ -224,6 +225,12 @@ describe('PeriodOverPeriodChart', () => {
     // Asserted on the class because jsdom applies no Tailwind, so the breakpoint has no effect
     // here that a rendered-size assertion could see — same approach as the gating test above.
     expect(control.className.split(/\s+/)).toContain('md:hidden')
+  })
+
+  // #122: phone-only, like the cap, and 20px tall where §7 asks for 44px.
+  it('gives the control a 44px hit area', () => {
+    render(<PeriodOverPeriodChart data={many} currentLabel="Sep" previousLabel="Aug" />)
+    expectTapTarget(screen.getByRole('button', { name: 'Show all 13 categories' }).className)
   })
 
   it('expands to every category when the control is used', () => {

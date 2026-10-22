@@ -174,6 +174,20 @@ const { data, error } = await readAllRows(
   })
 })
 
+// Tripwire 5 (#122) is called directly in check-invariants.test.ts; this is the script running it.
+describe('check-invariants: tap targets (#122)', () => {
+  it('fails a page with a text link that has no 44px rule, and passes it with one', () => {
+    const page = (classes: string) =>
+      `export default function Page() {\n  return <p>Use <a href="/settings" className={${classes}}>Settings</a>.</p>\n}\n`
+    const bare = check(page(`'text-emerald'`))
+    expect(bare.ok).toBe(false)
+    expect(bare.out).toContain('app/(app)/x/page.tsx:2')
+    expect(bare.out).toContain('[tap-target]')
+    rmSync(dir, { recursive: true, force: true })
+    expect(check(page('`${tapTargetClass} text-emerald`')).ok).toBe(true)
+  })
+})
+
 // main() walks scripts/ only when it exists (these scratch trees have none). Any other failure to
 // read it must stop the check, not pass it with scripts/ unscanned.
 describe('check-invariants: the scripts/ walk', () => {

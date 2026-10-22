@@ -7,9 +7,11 @@ import {
   checkUserCategoryWrites,
   checkSuggestionWrites,
   checkBrandCasts,
+  checkTapTargets,
+  TAP_TARGETS_ALLOWED,
 } from '../../scripts/check-invariants.mjs'
 
-// Tripwires 1 and 4, called directly. Fixtures are inline; none lives under app/, lib/ or
+// Tripwires 1, 4 and 5, called directly. Fixtures are inline; none lives under app/, lib/ or
 // components/.
 const file = (path: string, text: string) => [{ path, text }]
 const checks = (r: { check: string }[]) => r.map((f) => f.check)
@@ -224,6 +226,128 @@ describe('brand-cast', () => {
   it('allows the three producers', () => {
     for (const p of ['lib/category-rules.ts', 'lib/category-context.ts', 'lib/spend-context.ts']) {
       expect(checkBrandCasts(file(p, 'return x as CategoryData'))).toEqual([])
+    }
+  })
+})
+
+// Tripwire 5 (#122): a raw <a>, <Link> or <button> whose classes carry no 44px rule. Stage 5 of the
+// phone pass raised the shared control classes, and eight controls with classes of their own stayed
+// 16-20px tall on a phone. Each fixture passes its own allowlist, empty unless the test is about one.
+describe('tap-target', () => {
+  const C = 'components/X.tsx'
+  const LINK = `import Link from 'next/link'\n`
+  type Entry = { file: string; classes: string; reason: string }
+  const tap = (src: string, allowed: Entry[] = []) => checkTapTargets(file(C, src), allowed)
+
+  it('fires on a text link with classes of its own, on the line its tag opens', () => {
+    const src = `export function X() {
+  return (
+    <p className="text-sm">
+      To rename one, use <a href="/settings" className="text-emerald">Settings</a>.
+    </p>
+  )
+}`
+    expect(tap(src).map((f) => [f.check, f.file, f.line])).toEqual([['tap-target', C, 4]])
+  })
+
+  // Why it parses rather than matches: an attribute can hold `=>`, and a pattern that reads a tag to
+  // its first `>` stops inside the onClick, before the classes.
+  it('reads past a `=>` in an attribute to the classes after it', () => {
+    expect(checks(tap('<button type="button" onClick={() => setOpen((v) => !v)} className="text-sm text-emerald">Show all</button>'))).toEqual(['tap-target'])
+    expect(tap('<button type="button" onClick={() => setOpen((v) => !v)} className={`${tapTargetClass} text-sm text-emerald`}>Show all</button>')).toEqual([])
+  })
+
+  it("fires on next/link's Link, under whatever name it is imported as", () => {
+    expect(checks(tap(`${LINK}const v = <Link href="/transactions" className="text-xs">View all</Link>`))).toEqual(['tap-target'])
+    expect(checks(tap(`import NextLink from 'next/link'\nconst v = <NextLink href="/transactions">View all</NextLink>`))).toEqual(['tap-target'])
+  })
+
+  it('leaves alone a component that is not a control', () => {
+    expect(tap('<Card className="p-5"><span className="text-xs">Learned</span></Card>')).toEqual([])
+  })
+
+  it.each([
+    ['tapTargetClass, in a template', '<a href="/x" className={`${tapTargetClass} text-sm`}>x</a>'],
+    ['tapTargetClass, alone', '<a href="/x" className={tapTargetClass}>x</a>'],
+    ['buttonClass', `<a href="/x" className={buttonClass('secondary', 'md')}>x</a>`],
+    ['buttonClass, in a template', '<button className={`${buttonClass("ghost", "sm")} w-full`}>x</button>'],
+    ['min-h-[44px] of its own', '<button className="inline-flex min-h-[44px] min-w-[44px] md:min-h-0 md:h-6">⋮</button>'],
+    ['min-h-[44px] in the text of a template', "<a href=\"/x\" className={`${active ? 'text-emerald' : 'text-faint'} inline-flex min-h-[44px] md:min-h-0`}>x</a>"],
+  ])('passes a control with %s', (_name, src) => {
+    expect(tap(src)).toEqual([])
+  })
+
+  it.each([
+    ['no classes at all', '<a href="/x">x</a>'],
+    ['44px only under a condition', `<a href="/x" className={open ? 'min-h-[44px]' : ''}>x</a>`],
+    ['44px only from md', '<a href="/x" className="md:min-h-[44px]">x</a>'],
+    ['classes from a prop', '<button className={className}>x</button>'],
+  ])('fires on a control with %s', (_name, src) => {
+    expect(checks(tap(src))).toEqual(['tap-target'])
+  })
+
+  // Controls shown only from md up are not a phone's, and §7's 44px is a phone rule.
+  it('passes a control under an element hidden below md', () => {
+    const sidebar = `${LINK}<aside className="fixed inset-y-0 hidden w-64 md:flex">
+  <nav>{NAV.map((n) => <Link key={n} href={n} className="px-3 py-2 text-sm">{n}</Link>)}</nav>
+</aside>`
+    expect(tap(sidebar)).toEqual([])
+    expect(tap('<td className="hidden md:table-cell"><button className="text-xs">x</button></td>')).toEqual([])
+    expect(tap('<a href="/x" className="hidden text-xs md:inline">x</a>')).toEqual([])
+  })
+
+  it('still fires under an element hidden from md up, shown from sm, or hidden only under a condition', () => {
+    expect(checks(tap('<div className="md:hidden"><button className="text-sm">Show all</button></div>'))).toEqual(['tap-target'])
+    expect(checks(tap('<div className="hidden sm:block"><button className="text-sm">x</button></div>'))).toEqual(['tap-target'])
+    expect(checks(tap(`<div className={open ? 'contents' : 'hidden md:contents'}><button className="text-sm">x</button></div>`))).toEqual(['tap-target'])
+  })
+
+  it('passes a control the allowlist names by its file and classes, and no other', () => {
+    const allowed = [{ file: C, classes: 'block px-4 py-3 text-sm', reason: '46px tall' }]
+    expect(tap('<a href="/x" className="block px-4 py-3 text-sm">x</a>', allowed)).toEqual([])
+    // However the class string is spaced or broken over lines.
+    expect(tap('<a href="/x" className={`block px-4\n      py-3  text-sm`}>x</a>', allowed)).toEqual([])
+    expect(checks(checkTapTargets(file('components/Y.tsx', '<a href="/x" className="block px-4 py-3 text-sm">x</a>'), allowed))).toEqual(['tap-target'])
+  })
+
+  // The allowlist names a template's expressions `${…}`, and a class from a prop by its expression.
+  it('names a control whose classes are not one string', () => {
+    const allowed = [
+      { file: C, classes: 'flex flex-col py-2 ${…}', reason: '53px tall' },
+      { file: C, classes: '{className}', reason: "the caller's" },
+    ]
+    const src = `<nav>
+  <a href="/x" className={\`flex flex-col py-2 \${active ? 'text-emerald' : 'text-faint'}\`}>x</a>
+  <button className={className}>y</button>
+</nav>`
+    expect(tap(src, allowed)).toEqual([])
+  })
+
+  // Changing an allowlisted control's classes asks the question again, and the entry for the old
+  // classes fails too, so the list cannot go on naming a control that is gone.
+  it('fires on a changed control, and on the entry that named it before', () => {
+    const allowed = [{ file: C, classes: 'block px-4 py-3 text-sm', reason: '46px tall' }]
+    const found = tap('<a href="/x" className="block px-4 py-2 text-sm">x</a>', allowed)
+    expect(checks(found)).toEqual(['tap-target', 'tap-target'])
+    expect(found[1].message).toContain('"block px-4 py-3 text-sm"')
+  })
+
+  it('does not call an entry stale when its file was not read', () => {
+    const allowed = [{ file: 'components/Other.tsx', classes: 'block', reason: 'tall' }]
+    expect(tap('<a href="/x" className={tapTargetClass}>x</a>', allowed)).toEqual([])
+  })
+
+  it('reads .tsx files in app/ and components/ only', () => {
+    expect(checkTapTargets(file('lib/x.tsx', '<a href="/x">x</a>'), [])).toEqual([])
+    expect(checkTapTargets(file('components/x.ts', 'export const a = 1'), [])).toEqual([])
+    expect(checks(checkTapTargets(file('app/(app)/x/page.tsx', '<a href="/x">x</a>'), []))).toEqual(['tap-target'])
+  })
+
+  it('gives every entry on the real allowlist a reason', () => {
+    expect(TAP_TARGETS_ALLOWED.length).toBeGreaterThan(0)
+    for (const e of TAP_TARGETS_ALLOWED) {
+      expect(e.file).toMatch(/^(app|components)\/.+\.tsx$/)
+      expect(e.reason.length).toBeGreaterThan(20)
     }
   })
 })

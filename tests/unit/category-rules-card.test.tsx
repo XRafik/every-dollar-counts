@@ -3,6 +3,7 @@ import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testi
 import { CategoryRulesCard, type RuleView, type RuleCategory } from '@/components/CategoryRulesCard'
 import { SAVE_TIMEOUT_MS } from '@/lib/save-response'
 import { neverSettles, useFakeSaveClock } from './helpers/save-replies'
+import { expectTapTarget } from './helpers/tap-target'
 
 const refresh = vi.hoisted(() => vi.fn())
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }))
@@ -195,6 +196,12 @@ describe('CategoryRulesCard', () => {
     expect(note.textContent).toBe('This category was just deleted. Reload the page.')
     expect(note.className).toBe('text-xs text-muted')
     expect(screen.getByRole('link', { name: 'Reload the page.' }).getAttribute('href')).toBe('/settings')
+  })
+
+  // #122's comment: the row's only way on in that state, and a 16px-tall text-xs link on a phone.
+  it('gives Reload the page. a 44px hit area', () => {
+    render(<CategoryRulesCard rules={[safeway({ categoryId: 'c-gone', categoryName: 'a deleted category' })]} categories={CATS} suggestedCount={null} />)
+    expectTapTarget(screen.getByRole('link', { name: 'Reload the page.' }).className)
   })
 
   it('rolls back on a redirected Change and says the session ended', async () => {

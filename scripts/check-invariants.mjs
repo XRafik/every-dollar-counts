@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import ts from 'typescript'
 
 // ---------------------------------------------------------------------------
 // 1. Every read on a page, and in the lib/ helpers pages call, checks `error`.
@@ -437,6 +438,190 @@ export function checkBrandCasts(files) {
 }
 
 // ---------------------------------------------------------------------------
+// 5. A control shown on a phone is a 44px tap target.
+//
+// #122. Spec §7 asks for a 44px minimum tap height on a phone. Stage 5 of the phone pass met it by
+// raising the shared control classes, which reach only the controls that use them: eight text links
+// and text buttons with classes of their own stayed 16-20px tall on a phone, two of them added by the
+// pass itself, for phones. The phone header's sign-out was a ninth, at 36px (#121). So every raw <a>,
+// <button> and next/link <Link> in app/ and components/ carries a 44px rule in its classes:
+// tapTargetClass, buttonClass(…), or min-h-[44px] itself, written so it always applies (not in one
+// branch of a condition, not only from a breakpoint).
+//
+// It parses the TSX with the TypeScript compiler, because an attribute can hold `=>` and a pattern
+// that reads a tag to its first `>` stops inside the onClick. A control under an element whose own
+// classes hide it below `md` passes: `hidden`, with only an md: or wider variant to show it again.
+// §7 is a phone rule. Every other control without the rule is named below, by its file and its
+// classes, with why it is fine. The classes are the name so that changing them asks the question
+// again; and an entry that names nothing any more fails too, so the list cannot outlive its controls.
+// In a name, a template's expressions are written `${…}`, and classes that are one expression are
+// written as that expression in braces.
+//
+// Heights were measured in a production build at 390px wide (#122).
+// ---------------------------------------------------------------------------
+export const TAP_TARGETS_ALLOWED = [
+  {
+    file: 'app/(app)/dashboard/page.tsx',
+    classes: 'block rounded-card border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber',
+    reason: 'The stale home value banner, the width of the page: py-3 and a border around its text, 66px tall.',
+  },
+  {
+    file: 'app/(app)/dashboard/page.tsx',
+    classes: 'flex items-center justify-between rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-2',
+    reason: 'Owed to you, the width of the page: py-3 and a border around a 20px line, 46px tall.',
+  },
+  {
+    file: 'components/NotSyncingBanner.tsx',
+    classes: 'block rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral',
+    reason: "The \"isn't syncing\" banner, the width of the page: py-3 and a border around its text, 66px tall, 46 at one line.",
+  },
+  {
+    file: 'components/ui/StatRows.tsx',
+    classes: 'flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-2',
+    reason: "A row of the phone dashboard's figures, the width of the page: py-3 around a figure and its note, 62px tall.",
+  },
+  {
+    file: 'components/ui/StatCard.tsx',
+    classes: 'block',
+    reason: 'Wraps the whole tile, a Card with p-5 around a label and a figure: the net worth tile is 128px tall.',
+  },
+  {
+    file: 'components/BreakdownList.tsx',
+    classes: 'block transition-colors hover:bg-surface-2',
+    reason: 'Wraps a breakdown row, the width of the card: py-3 around a name and a sub line, 60px tall.',
+  },
+  {
+    file: 'components/TransactionCard.tsx',
+    classes:
+      'flex w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2',
+    reason: "The phone's transaction row, the width of the list: py-3 around a name and a meta line, 67px tall.",
+  },
+  {
+    file: 'components/AppShell.tsx',
+    classes: 'flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${…}',
+    reason: "The phone's bottom tab bar: py-2 around a 20px icon and its label, 53px tall and 56px wide.",
+  },
+  {
+    file: 'components/SignOutButton.tsx',
+    classes: '{className}',
+    reason: "Its classes are its caller's. AppShell gives the phone header's buttonClass (#121); the sidebar's is desktop only.",
+  },
+  {
+    file: 'components/LearnedMarker.tsx',
+    classes:
+      'flex h-[34px] shrink-0 items-center rounded text-faint transition-colors hover:text-emerald focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald/40',
+    reason:
+      "Desktop only. TransactionRow is its one caller, in the transactions table, which is hidden below md. On a phone the sheet's Manage in Settings is the way there.",
+  },
+]
+
+// Values that carry the 44px rule below md: components/ui/styles.ts's classes, and buttonClass(…).
+const TAP_RULE_CLASSES = new Set(['tapTargetClass', 'inputClass', 'selectClass'])
+const carriesTapRule = (e) =>
+  (ts.isIdentifier(e) && TAP_RULE_CLASSES.has(e.text)) ||
+  (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && e.expression.text === 'buttonClass')
+
+// Tailwind's display utilities: under a variant below md, any of them shows what `hidden` hides.
+const DISPLAYS = new Set(
+  'block inline-block inline flex inline-flex grid inline-grid contents flow-root list-item table inline-table table-caption table-cell table-column table-column-group table-footer-group table-header-group table-row-group table-row'.split(' ')
+)
+
+const words = (s) => s.split(/\s+/).filter(Boolean)
+const SLOT = '\u0000'
+
+// An element's className, read three ways: `name`, to match the allowlist by; `tokens`, the classes
+// it has whatever the state (a string's text, never a branch of a condition; a token a template
+// expression runs into keeps the SLOT, so it matches no class); and `rule`, whether they carry the
+// 44px rule.
+function classesOf(opening, sf) {
+  const attr = opening.attributes.properties.find((p) => ts.isJsxAttribute(p) && p.name.getText(sf) === 'className')
+  const e = attr?.initializer && ts.isJsxExpression(attr.initializer) ? attr.initializer.expression : attr?.initializer
+  if (!e) return { name: '', tokens: [], rule: false }
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    const tokens = words(e.text)
+    return { name: tokens.join(' '), tokens, rule: tokens.includes('min-h-[44px]') }
+  }
+  if (ts.isTemplateExpression(e)) {
+    const raw = [e.head.text, ...e.templateSpans.map((s) => SLOT + s.literal.text)].join('')
+    const tokens = words(raw)
+    return {
+      name: words(raw.replaceAll(SLOT, '${…}')).join(' '),
+      tokens,
+      rule: tokens.includes('min-h-[44px]') || e.templateSpans.some((s) => carriesTapRule(s.expression)),
+    }
+  }
+  return { name: `{${words(e.getText(sf)).join(' ')}}`, tokens: [], rule: carriesTapRule(e) }
+}
+
+// Whether classes hide their element below `md` in every state: `hidden`, and no display utility
+// under a variant other than md: or wider. `hidden sm:block` shows from 640px, and a state variant
+// such as `group-open:block` shows it on a tap.
+function hiddenBelowMd(tokens) {
+  if (!tokens.includes('hidden')) return false
+  return !tokens.some((t) => {
+    const at = t.lastIndexOf(':')
+    return at > 0 && DISPLAYS.has(t.slice(at + 1)) && !/^(md|lg|xl|2xl):/.test(t)
+  })
+}
+
+export function checkTapTargets(files, allowed = TAP_TARGETS_ALLOWED) {
+  const out = []
+  const read = new Set()
+  const named = new Set()
+  for (const { path, text } of files) {
+    if (!/^(app|components)\/.+\.tsx$/.test(path)) continue
+    read.add(path)
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    // <a> and <button>, and next/link's Link under whatever name this file imports it as.
+    const controls = new Set(['a', 'button'])
+    for (const s of sf.statements) {
+      if (ts.isImportDeclaration(s) && s.moduleSpecifier.text === 'next/link' && s.importClause?.name) {
+        controls.add(s.importClause.name.text)
+      }
+    }
+    const visit = (node, hidden) => {
+      const opening = ts.isJsxElement(node) ? node.openingElement : ts.isJsxSelfClosingElement(node) ? node : null
+      if (opening) {
+        const classes = classesOf(opening, sf)
+        hidden = hidden || hiddenBelowMd(classes.tokens)
+        const tag = opening.tagName.getText(sf)
+        if (controls.has(tag) && !hidden && !classes.rule) {
+          const entry = allowed.find((a) => a.file === path && a.classes === classes.name)
+          if (entry) named.add(entry)
+          else {
+            out.push({
+              check: 'tap-target',
+              file: path,
+              line: lineOf(text, opening.getStart(sf)),
+              message:
+                `<${tag}> has no 44px rule in its classes. On a phone §7 asks for 44px, and controls with ` +
+                'classes of their own were left 16-20px tall (#122). Give it tapTargetClass (a text link or ' +
+                'text button) or buttonClass, or min-h-[44px] and md:min-h-0. If it is 44px tall already, ' +
+                'or never shown below md, name it in TAP_TARGETS_ALLOWED with why.',
+            })
+          }
+        }
+      }
+      ts.forEachChild(node, (child) => visit(child, hidden))
+    }
+    visit(sf, false)
+  }
+  for (const entry of allowed) {
+    if (!read.has(entry.file) || named.has(entry)) continue
+    out.push({
+      check: 'tap-target',
+      file: entry.file,
+      line: 1,
+      message:
+        `TAP_TARGETS_ALLOWED names a control here with the classes "${entry.classes}", and no control ` +
+        'in this file without a 44px rule has them. Remove the entry, or, if the classes changed, check ' +
+        'the control is still 44px tall on a phone and name it by its new ones (#122).',
+    })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
 
 function walk(dir, out = [], ext = /\.tsx?$/) {
   for (const entry of readdirSync(dir)) {
@@ -468,6 +653,7 @@ function main() {
     ...checkUserCategoryWrites([...files, ...scripts]),
     ...checkSuggestionWrites([...files, ...scripts]),
     ...checkBrandCasts(files),
+    ...checkTapTargets(files),
   ]
   if (failures.length) {
     console.error(`\ncheck:invariants — ${failures.length} problem(s):\n`)

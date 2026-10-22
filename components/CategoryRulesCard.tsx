@@ -4,7 +4,7 @@ import { Fragment, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { selectClass } from '@/components/ui/styles'
+import { selectClass, tapTargetClass } from '@/components/ui/styles'
 import { MAY_NOT_HAVE_SAVED, sendSave } from '@/lib/save-response'
 import type { CategoryRule, Kind } from '@/lib/category-rules'
 import type { RuleCounts } from '@/lib/category-views'
@@ -198,7 +198,7 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
         // No #category-rules on the link: from /settings a hash-only change scrolls, it does not reload.
         <p className="text-xs text-muted">
           This category was just deleted.{' '}
-          <a href="/settings" className="font-medium underline">
+          <a href="/settings" className={`${tapTargetClass} font-medium underline`}>
             Reload the page.
           </a>
         </p>
