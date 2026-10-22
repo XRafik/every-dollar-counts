@@ -8,11 +8,21 @@
 // syncing" banner beside it (#135), and a word or link one that no page asked for. The title bar has
 // PageHeader's title's size and place, so the title does not move when the page arrives.
 //
-// Keep loading boundaries a level above the route folders, as this one is. Next's router scrolls to
-// a link's #target from the page's own segment, which here mounts with the page, so
-// /settings#category-rules lands on its card. Beside a page.tsx, a loading.tsx makes the router try
-// that scroll while the placeholder is up, find no target and drop it, and the links to Category
-// rules land at the top of Settings (tests/unit/app-loading.test.tsx).
+// Keep it the only loading boundary under app/(app), and keep <Suspense> away from a card a link
+// scrolls to. Next's router scrolls a tap in the app to a link's #target from the page's own
+// segment, which here mounts with the page, so /settings#category-rules lands on its card. A
+// loading.tsx in a folder below, or a <Suspense> around the card, has the router try that scroll
+// while a placeholder is up, find no target and drop it (tests/unit/app-loading.test.tsx,
+// tests/unit/settings-page.test.tsx).
+//
+// A full page load of that address, as from a new tab, is the browser's to scroll, not the
+// router's, and it can do so before the page has streamed in behind this placeholder.
+// ScrollToHashTarget, in the Settings page, puts the card in view then.
+//
+// Not covered: a tap in the app whose fetch of the page fails. The router falls back to loading the
+// address in full, but that is the address it already showed with this placeholder, and with a
+// #fragment the browser takes it as a jump within the page. Nothing loads, and the placeholder
+// stays up until the person taps something else. A link with no #fragment loads in full.
 export default function Loading() {
   return (
     <div role="status" className="space-y-6">

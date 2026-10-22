@@ -16,6 +16,7 @@ import { fetchCategoryContext, readTransactionsForCounts } from '@/lib/category-
 import { buildCategoryContext, kindOf } from '@/lib/category-rules'
 import { categoryUsage, deleteImpact } from '@/lib/category-views'
 import { CategoryRulesCard, type RuleView, type RuleCategory } from '@/components/CategoryRulesCard'
+import { ScrollToHashTarget } from '@/components/ScrollToHashTarget'
 import type { Category } from '@/lib/categories'
 
 type CategorySettings = {
@@ -230,7 +231,9 @@ export default async function SettingsPage() {
       </Card>
 
       {/* scroll-mt clears the phone's sticky h-14 top bar (AppShell), so a #category-rules link
-          does not land the heading under it; there is no sticky bar from md up. */}
+          does not land the heading under it; there is no sticky bar from md up. No <Suspense>
+          around this card: Next's router scrolls to it as the page commits, and would find a
+          fallback in its place (#156). */}
       <Card id="category-rules" className="scroll-mt-20 md:scroll-mt-6 p-5 space-y-3">
         <h2 className="text-base font-semibold text-ink">Category rules</h2>
         {categorySettings ? (
@@ -242,6 +245,8 @@ export default async function SettingsPage() {
         ) : (
           categoriesUnavailable
         )}
+        {/* After a full page load, which can end at the top of the page instead (#156). */}
+        <ScrollToHashTarget id="category-rules" />
       </Card>
     </div>
   )

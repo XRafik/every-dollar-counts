@@ -90,6 +90,7 @@ import { BankList } from '@/components/BankList'
 import { HomeValueCard } from '@/components/HomeValueCard'
 import { LinkButton } from '@/components/LinkButton'
 import { Card } from '@/components/ui/Card'
+import { ScrollToHashTarget } from '@/components/ScrollToHashTarget'
 import { txnRows } from '../stubs/postgrest-pages'
 import { catalogFingerprint } from '@/lib/category-rules'
 
@@ -554,5 +555,12 @@ describe('Settings: the Category rules card a link scrolls to (#156)', () => {
     const path = pathTo(await SettingsPage(), 'category-rules')
     expect(path).not.toBeNull()
     expect(path!.filter((el) => (el as { type?: unknown }).type === Suspense)).toEqual([])
+  })
+
+  // A full page load, as from a new tab, streams the page in after app/(app)/loading.tsx's
+  // placeholder, and the browser's own scroll to #category-rules can come before the card is there.
+  it('is scrolled into view after a full page load that left Settings at its top', async () => {
+    const tree = await SettingsPage()
+    expect(findProps(tree, ScrollToHashTarget)).toEqual({ id: 'category-rules' })
   })
 })
