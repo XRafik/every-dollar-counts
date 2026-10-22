@@ -729,9 +729,11 @@ describe('Dashboard average savings (#126)', () => {
     expect(classes).toContain('md:hidden')
   })
 
-  // #137: a compact tile has no phone presentation any more, which holds only while every compact
-  // tile sits under the wrapper hidden below md. The hero, outside it, is the one tile a phone shows.
-  it('puts every compact tile under the wrapper hidden below md', async () => {
+  // #137: a compact tile has no phone presentation any more, which holds only while the hero is the
+  // one StatCard outside the wrapper hidden below md. Asserted on what is outside the wrapper, not on
+  // the tiles marked compact: compact is StatCard's default, so a tile that leaves `variant` out is
+  // compact too, and so is a hero that loses its `variant="hero"`.
+  it('keeps every StatCard but the hero under the wrapper hidden below md', async () => {
     const tree = await render()
     const wrappers: unknown[] = []
     const walk = (n: unknown): void => {
@@ -743,9 +745,9 @@ describe('Dashboard average savings (#126)', () => {
     }
     walk(tree)
     expect(wrappers).toHaveLength(1)
-    const compact = findStatCards(tree).filter((c) => c.props.variant === 'compact')
-    expect(compact).toHaveLength(3)
-    expect(findStatCards(wrappers[0])).toEqual(compact)
+    const inWrapper = findStatCards(wrappers[0])
+    const outside = findStatCards(tree).filter((c) => !inWrapper.includes(c))
+    expect(outside.map((c) => c.props.variant)).toEqual(['hero'])
   })
 
   // The read is seven months; the chart under "Last 6 months" must still get six.
