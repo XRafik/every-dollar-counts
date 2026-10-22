@@ -588,6 +588,16 @@ describe('Settings: opened on the Category rules card by a link (#156)', () => {
     expect(findProps(rulesCard, ScrollToSection)).toEqual({ id: section })
   })
 
+  // A failed card's "Try again." loads Settings again. The Category rules card's lands back on that
+  // card; the Categories card's, which says the same, goes to the page's top as before.
+  it("sends the Category rules card's Try again back to the card", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    results.categories = { data: null, error: { message: 'boom' } }
+    const tree = await SettingsPage()
+    expect(findProps(card(tree, 'Category rules'), 'a')).toMatchObject({ href: CATEGORY_RULES_HREF })
+    expect(findProps(card(tree, 'Categories'), 'a')).toMatchObject({ href: '/settings' })
+  })
+
   // A phone's sticky top bar is 56px (AppShell's h-14). scroll-mt-20 stops the scroll 80px short, so
   // the card's heading lands below the bar rather than under it.
   it("keeps the card's heading clear of the phone's sticky top bar", async () => {

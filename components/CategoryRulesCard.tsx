@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { selectClass } from '@/components/ui/styles'
 import { MAY_NOT_HAVE_SAVED, sendSave } from '@/lib/save-response'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import type { CategoryRule, Kind } from '@/lib/category-rules'
 import type { RuleCounts } from '@/lib/category-views'
 
@@ -195,10 +196,11 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
         </div>
       ) : (
         // The FK deletes a rule with its category, so this rule raced a delete: nothing to change.
-        // No #category-rules on the link: from /settings a hash-only change scrolls, it does not reload.
+        // CATEGORY_RULES_HREF reloads Settings and lands back on this card (#156). An address with a
+        // query loads in full even from itself; one with a #fragment would only have jumped within it.
         <p className="text-xs text-muted">
           This category was just deleted.{' '}
-          <a href="/settings" className="font-medium underline">
+          <a href={CATEGORY_RULES_HREF} className="font-medium underline">
             Reload the page.
           </a>
         </p>

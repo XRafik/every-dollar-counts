@@ -17,6 +17,7 @@ import { buildCategoryContext, kindOf } from '@/lib/category-rules'
 import { categoryUsage, deleteImpact } from '@/lib/category-views'
 import { CategoryRulesCard, type RuleView, type RuleCategory } from '@/components/CategoryRulesCard'
 import { ScrollToSection } from '@/components/ScrollToSection'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import type { Category } from '@/lib/categories'
 
 type CategorySettings = {
@@ -134,12 +135,13 @@ async function readOrNull<T>(what: string, read: () => Promise<T>): Promise<T | 
 
 // What a card shows in place of a read that failed. A plain function, not a component, so the
 // markup appears in the unrendered tree the page test reads. `Try again.` is a plain link so it
-// works in the installed app, which has no reload button (#139).
-function unavailable(message: string) {
+// works in the installed app, which has no reload button (#139). It loads `href`, the page's top
+// unless a card names itself there, as Category rules does so a retry lands back on it (#156).
+function unavailable(message: string, href = '/settings') {
   return (
     <p role="alert" className="text-sm text-coral">
       {message}{' '}
-      <a href="/settings" className="font-medium underline">
+      <a href={href} className="font-medium underline">
         Try again.
       </a>
     </p>
@@ -161,6 +163,7 @@ export default async function SettingsPage() {
   // both say so.
   const categorySettings = await readOrNull('categories and rules', () => loadCategorySettings(supabase))
   const categoriesUnavailable = unavailable("Couldn't load categories and rules.")
+  const rulesUnavailable = unavailable("Couldn't load categories and rules.", CATEGORY_RULES_HREF)
 
   return (
     <div className="space-y-6">
@@ -241,7 +244,7 @@ export default async function SettingsPage() {
             suggestedCount={categorySettings.suggestedCount}
           />
         ) : (
-          categoriesUnavailable
+          rulesUnavailable
         )}
         {/* Where CATEGORY_RULES_HREF opens the page (#156). */}
         <ScrollToSection id="category-rules" />
