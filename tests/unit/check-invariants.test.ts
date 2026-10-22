@@ -9,6 +9,7 @@ import {
   checkSuggestionWrites,
   checkBrandCasts,
   checkTapTargets,
+  checkSmBreakpoint,
   TAP_TARGETS_ALLOWED,
   PASS_THROUGH,
   SHARED_CLASSES,
@@ -16,7 +17,7 @@ import {
 import { inputClass, selectClass, tapTargetClass } from '@/components/ui/styles'
 import { buttonClass } from '@/components/ui/Button'
 
-// Tripwires 1, 4 and 5, called directly. Fixtures are inline; none lives under app/, lib/ or
+// Tripwires 1, 4, 5 and 6, called directly. Fixtures are inline; none lives under app/, lib/ or
 // components/.
 const file = (path: string, text: string) => [{ path, text }]
 const checks = (r: { check: string }[]) => r.map((f) => f.check)
@@ -657,5 +658,42 @@ export function Other() {
     expect(found.map((f) => [f.check, f.file, f.line])).toEqual([['tap-target', 'scripts/check-invariants.mjs', 1]])
     expect(found[0].message).toContain('compiler options')
     expect(found[0].message).not.toContain('does not parse')
+  })
+})
+
+// Tripwire 6 (#123): no `sm:` class in app/ or components/. Below md the app has one layout, the
+// phone's, and a class that switched at sm (640px) gave 640-767px a piece of the desktop layout
+// inside it.
+describe('sm-breakpoint', () => {
+  it('fires on an sm: class, on its line, naming it', () => {
+    const found = checkSmBreakpoint(file('components/X.tsx', 'export function X() {\n  return <div className="grid gap-4 sm:grid-cols-2" />\n}\n'))
+    expect(found.map((f) => [f.check, f.file, f.line])).toEqual([['sm-breakpoint', 'components/X.tsx', 2]])
+    expect(found[0].message).toContain('`sm:grid-cols-2`')
+  })
+
+  it.each([
+    ['a class string in a .ts module', 'components/ui/x.ts', `export const big = 'text-xl sm:text-2xl'`],
+    ['a template', 'app/(app)/x/page.tsx', 'const c = `flex ${a} sm:flex-row`'],
+    ['a branch', 'components/X.tsx', `const c = open ? 'sm:block' : 'hidden'`],
+    ['sm: after another variant', 'components/X.tsx', `const c = 'hover:sm:underline'`],
+    ['sm: before another variant', 'components/X.tsx', `const c = 'sm:hover:underline'`],
+    ['max-sm:', 'components/X.tsx', `const c = 'max-sm:hidden'`],
+  ])('fires on %s', (_name, path, text) => {
+    expect(checks(checkSmBreakpoint(file(path, text)))).toEqual(['sm-breakpoint'])
+  })
+
+  it.each([
+    ['md: and wider', `const c = 'md:grid-cols-2 lg:grid-cols-3'`],
+    ["Button's size names", `const sizes = { sm: 'min-h-[44px] md:h-8' }\nconst b = buttonClass('ghost', 'sm')`],
+    ['a comment', `// was sm:grid-cols-2 (#123)\nconst c = 'grid'`],
+    ['a container query', `const c = '@sm:flex-row'`],
+  ])('passes %s', (_name, text) => {
+    expect(checkSmBreakpoint(file('components/X.tsx', text))).toEqual([])
+  })
+
+  it('reads app/ and components/ only', () => {
+    expect(checkSmBreakpoint(file('lib/x.ts', `const c = 'sm:block'`))).toEqual([])
+    expect(checkSmBreakpoint(file('scripts/x.mjs', `const c = 'sm:block'`))).toEqual([])
+    expect(checks(checkSmBreakpoint(file('app/x.tsx', `const c = 'sm:block'`)))).toEqual(['sm-breakpoint'])
   })
 })

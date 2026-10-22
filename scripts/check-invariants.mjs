@@ -909,6 +909,45 @@ export function checkTapTargets(
 }
 
 // ---------------------------------------------------------------------------
+// 6. No class switches at sm.
+//
+// #123. Below md the app has one layout, the phone's, and md is where it switches to the desktop's.
+// Classes that switched at sm (640px) gave 640-767px a piece of the desktop layout inside the phone's:
+// two goals or accounts across, a narrowed search field, Trends' heading rows. So no string or
+// template in app/ or components/ holds a class with the sm: variant, or max-sm:, which splits the
+// phone's range the same way. Comments are not read, and nor are names: buttonClass's `sm` size is a
+// property, and its value has no sm: class.
+// ---------------------------------------------------------------------------
+export function checkSmBreakpoint(files) {
+  const out = []
+  const texts = [ts.isStringLiteral, ts.isNoSubstitutionTemplateLiteral, ts.isTemplateHead, ts.isTemplateMiddle, ts.isTemplateTail]
+  for (const { path, text } of files) {
+    if (!/^(app|components)\/.+\.tsx?$/.test(path)) continue
+    const kind = path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind)
+    const visit = (node) => {
+      if (texts.some((is) => is(node))) {
+        for (const token of words(node.text)) {
+          if (!parseClass(token).variants.some((v) => v === 'sm' || v === 'max-sm')) continue
+          out.push({
+            check: 'sm-breakpoint',
+            file: path,
+            line: lineOf(text, node.getStart(sf)),
+            message:
+              `has \`${token}\`, a class that switches at sm (640px), inside the phone layout's range. ` +
+              'Below md the app has one layout, so 640-767px would get a piece of the desktop one (#123). ' +
+              'Switch at md, where the app changes between its phone and desktop layouts.',
+          })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sf)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
 
 function walk(dir, out = [], ext = /\.tsx?$/) {
   for (const entry of readdirSync(dir)) {
@@ -942,13 +981,14 @@ function main() {
     ...checkBrandCasts(files),
     // Every file under app/ and components/ is in `files`, so an entry for one that is not is stale.
     ...checkTapTargets(files, TAP_TARGETS_ALLOWED, { wholeTree: true }),
+    ...checkSmBreakpoint(files),
   ]
   if (failures.length) {
     console.error(`\ncheck:invariants — ${failures.length} problem(s):\n`)
     console.error(failures.map((f) => `  ${f.file}:${f.line}\n      [${f.check}] ${f.message}`).join('\n\n'))
     console.error(
-      '\nEach of these is a shape that has shipped a real bug here. Fix it, or add the file to the ' +
-        'matching allowlist in scripts/check-invariants.mjs with a reason and an issue number.\n'
+      '\nEach of these is a shape that has shipped a real bug here. Fix it, or, where its check has an ' +
+        'allowlist in scripts/check-invariants.mjs, add it there with a reason and an issue number.\n'
     )
     process.exit(1)
   }

@@ -60,8 +60,9 @@ describe('CategoryRulesCard', () => {
     expect(label.getAttribute('title')).toBe('A very long merchant name that will not fit on a phone')
     const li = label.closest('li')!
     const row = li.className.split(/\s+/)
-    // A column below md and a row from md, the one breakpoint (#123). It switched at sm, which gave
-    // 640-767px the desktop row while everything around it kept the phone layout.
+    // A column below md and a row from md, where the app switches between its phone and desktop
+    // layouts (#123). It switched at sm, which gave 640-767px the desktop row while everything around
+    // it kept the phone layout.
     expect(row).toEqual(expect.arrayContaining(['flex', 'flex-col', 'md:flex-row', 'md:items-center', 'md:gap-3']))
     // Lets the controls, and the alert, drop to their own line rather than squeeze the text to 0px (1280px, Chromium).
     expect(row).toContain('md:flex-wrap')

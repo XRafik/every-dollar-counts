@@ -139,11 +139,11 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
       : [`${rule.changed} changed by this rule`, ...(rule.pickedByHand > 0 ? [`${rule.pickedByHand} set by you`] : [])]
 
   return (
-    // A column below md and a row from md, the app's one breakpoint (#123). md:flex-wrap and the
-    // text's 19rem basis: where the row is too narrow for the longest count (≈298px, "No current
-    // transactions · set up from your earlier picks") beside the controls, as at 768px beside the
-    // sidebar, the controls drop to their own line instead of overlapping it. The wrap also puts
-    // the alert (md:basis-full) on a line of its own.
+    // A column below md and a row from md, where the app switches between its phone and desktop
+    // layouts (#123). md:flex-wrap and the text's 19rem basis: where the row is too narrow for the
+    // longest count (≈298px, "No current transactions · set up from your earlier picks") beside the
+    // controls, as at 768px beside the sidebar, the controls drop to their own line instead of
+    // overlapping it. The wrap also puts the alert (md:basis-full) on a line of its own.
     <li className="flex flex-col gap-2 py-3 md:flex-row md:flex-wrap md:items-center md:gap-3">
       <div className="min-w-0 md:flex-[1_0_19rem]">
         <p className="truncate text-sm font-medium text-ink" title={label}>

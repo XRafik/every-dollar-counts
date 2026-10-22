@@ -107,8 +107,8 @@ describe('GoalsList', () => {
     expect(bars.length).toBeGreaterThan(0)
   })
 
-  // One breakpoint (#123): two goals across from md, where the rest of the app changes layout, and
-  // one below it. At sm, 640-767px got two goals across beside the phone layout around them.
+  // Two goals across from md, where the app switches between its phone and desktop layouts (#123),
+  // and one below it. At sm, 640-767px got two goals across beside the phone layout around them.
   it('puts the goals two across from md up and one across below it', () => {
     const { container } = render(<GoalsList {...props} />)
     expect(container.querySelector('[data-goal-card]')!.parentElement!.className).toBe('grid gap-4 md:grid-cols-2')

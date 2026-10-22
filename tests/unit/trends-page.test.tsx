@@ -300,9 +300,9 @@ describe('Trends categories and rules (#28)', () => {
   })
 })
 
-// One breakpoint (#123): each card's heading sits beside its month from md, where the rest of the
-// app changes layout, and above it below md. They switched at sm, which gave 640-767px the desktop
-// row inside an otherwise phone layout.
+// Each card's heading sits beside its month from md, where the app switches between its phone and
+// desktop layouts (#123), and above it below md. They switched at sm, which gave 640-767px the
+// desktop row inside an otherwise phone layout.
 describe('Trends layout', () => {
   it('puts each card heading beside its month from md up, and above it below md', async () => {
     const heads = blocks(await TrendsPage())

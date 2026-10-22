@@ -194,7 +194,8 @@ const { data, error } = await readAllRows(
   })
 })
 
-// Tripwire 5 (#122) is called directly in check-invariants.test.ts; this is the script running it.
+// Tripwires 5 (#122) and 6 (#123) are called directly in check-invariants.test.ts; this is the script
+// running them.
 describe('check-invariants: tap targets (#122)', () => {
   it('fails a page with a text link that has no 44px rule, and passes it with one', () => {
     const page = (classes: string) =>
@@ -217,6 +218,19 @@ describe('check-invariants: tap targets (#122)', () => {
     expect(r.ok).toBe(false)
     for (const file of NAMED) expect(r.out).toContain(`${file}:1`)
     expect(r.out).toContain('no such file')
+  })
+})
+
+describe('check-invariants: sm: classes (#123)', () => {
+  it('fails a page with an sm: class, and passes it at md', () => {
+    const page = (cols: string) => `export default function Page() {\n  return <div className="grid ${cols}" />\n}\n`
+    const sm = check(page('sm:grid-cols-2'))
+    expect(sm.ok).toBe(false)
+    expect(sm.out).toContain('app/(app)/x/page.tsx:2')
+    expect(sm.out).toContain('[sm-breakpoint]')
+    rmSync(dir, { recursive: true, force: true })
+    const md = check(page('md:grid-cols-2'))
+    expect(md.ok, md.out).toBe(true)
   })
 })
 

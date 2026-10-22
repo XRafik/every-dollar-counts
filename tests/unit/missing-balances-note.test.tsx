@@ -140,8 +140,8 @@ describe('MissingBalancesNote', () => {
   })
 
   // Nothing is broken, so it is quieter than the coral "isn't syncing" banner: a plain bordered
-  // note in muted text, the same on every page. Refresh sits beside the words from md, the one
-  // breakpoint (#123), and under them below it.
+  // note in muted text, the same on every page. Refresh sits beside the words from md, where the app
+  // switches between its phone and desktop layouts (#123), and under them below it.
   it('keeps a quieter look than the banner', () => {
     const { container } = render(<MissingBalancesNote items={[bank('amex', 'Amex')]} accounts={[]} />)
     const note = container.firstElementChild!

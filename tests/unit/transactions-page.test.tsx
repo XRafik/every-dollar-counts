@@ -639,8 +639,9 @@ describe('Transactions tap targets (#122)', () => {
   })
 })
 
-// One breakpoint (#123): the search field fills its row below md and is 16rem from md up. It
-// narrowed at sm, so at 640-767px it was 16rem beside the phone layout of everything around it.
+// The search field fills its row below md and is 16rem from md up, where the app switches between
+// its phone and desktop layouts (#123). It narrowed at sm, so at 640-767px it was 16rem beside the
+// phone layout of everything around it.
 describe('Transactions layout', () => {
   it('narrows the search field at md, not sm', async () => {
     type El = { props: { children?: unknown; className?: string; name?: string } }

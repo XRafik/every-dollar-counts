@@ -25,12 +25,13 @@ export function AccountList({ accounts }: { accounts: Account[] }) {
       {accounts.slice(0, COLLAPSED).map((a) => (
         <AccountCard key={a.id} account={a} />
       ))}
-      {/* Between the cards it follows and the cards it reveals (#107). After the grid, the eight it
+      {/* Between the cards it follows and the cards it reveals (#107). After the grid, the cards it
           revealed came before it in the document, so a screen reader reading on from it moved past
           them. Here they follow it, and it holds its place under the thumb that tapped it. In the
           grid it is a grid item: `md:hidden` takes it out of the grid from `md` up, so the desktop
-          grid is as it was; below `md`, `col-span-full` gives it a row of its own whatever the
-          column count, and `justify-self-start` keeps it its own width. */}
+          grid is as it was. Below `md` the grid is one column (#123), so `col-span-full` changes
+          nothing today: it is a guard, keeping the control on a row of its own if the phone's grid
+          ever gets a second column. `justify-self-start` keeps it its own width. */}
       {canCollapse && (
         <button
           type="button"
