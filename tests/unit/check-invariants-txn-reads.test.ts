@@ -2,15 +2,19 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { TAP_TARGETS_ALLOWED } from '../../scripts/check-invariants.mjs'
 
 // The tripwire for #69, run against a scratch tree so each case is one file and nothing else.
 // The script scans app/, lib/ and components/ under its working directory.
-const SCRIPT = resolve('scripts/check-invariants.mjs')
-const REPO = fileURLToPath(new URL('../../', import.meta.url))
+//
+// Both paths are found from this file, not from the working directory: run from another checkout,
+// a path resolved from the working directory runs that checkout's script, and its tests pass or
+// fail on the wrong code (#201). Not `new URL(…, import.meta.url)`, which Vite rewrites in tests.
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const SCRIPT = join(REPO, 'scripts', 'check-invariants.mjs')
 let dir: string
 
 // The scratch tree holds the page under test, and a copy of each file tripwire 5's allowlist names
@@ -164,7 +168,9 @@ const x = await supabase.from('accounts').select('id').limit(5)`,
   // PostgREST caps the response whatever the request asked for, so a literal bound over 1,000 is
   // not a bound.
   it.each([[`    .limit(5000)`], [`    .range(0, 4999)`]])('fails a bound above the cap: %s', (chain) => {
-    expect(check(read(chain)).ok).toBe(false)
+    const r = check(read(chain))
+    expect(r.ok).toBe(false)
+    expect(r.out).toContain('unbounded-txn-read')
   })
 
   it('passes readAllRows however the call is laid out', () => {
