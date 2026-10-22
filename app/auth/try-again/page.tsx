@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { Card } from '@/components/ui/Card'
+import { tapTargetClass } from '@/components/ui/styles'
 
 // Where app/auth/confirm/route.ts sends someone whose sign-in it could not finish because Supabase
 // Auth could not be asked (#143). Nothing showed they aren't invited, so they are not told that,
@@ -15,7 +16,7 @@ export default function SignInTryAgain() {
         </p>
         <Link
           href="/login"
-          className="mt-4 inline-block text-sm font-medium text-emerald hover:text-emerald-600"
+          className={`${tapTargetClass} mt-4 text-sm font-medium text-emerald hover:text-emerald-600`}
         >
           Back to sign in
         </Link>

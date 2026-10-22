@@ -4,7 +4,7 @@ import { Fragment, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
-import { selectClass } from '@/components/ui/styles'
+import { selectClass, tapTargetClass } from '@/components/ui/styles'
 import { MAY_NOT_HAVE_SAVED, sendSave } from '@/lib/save-response'
 import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import type { CategoryRule, Kind } from '@/lib/category-rules'
@@ -140,12 +140,13 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
       : [`${rule.changed} changed by this rule`, ...(rule.pickedByHand > 0 ? [`${rule.pickedByHand} set by you`] : [])]
 
   return (
-    // sm:flex-wrap and the text's 19rem basis: where the row is too narrow for the longest count
-    // (≈298px, "No current transactions · set up from your earlier picks") beside the controls, as
-    // at 768px beside the sidebar, the controls drop to their own line instead of overlapping it.
-    // The wrap also puts the alert (sm:basis-full) on a line of its own.
-    <li className="flex flex-col gap-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
-      <div className="min-w-0 sm:flex-[1_0_19rem]">
+    // A column below md and a row from md, where the app switches between its phone and desktop
+    // layouts (#123). md:flex-wrap and the text's 19rem basis: where the row is too narrow for the
+    // longest count (≈298px, "No current transactions · set up from your earlier picks") beside the
+    // controls, as at 768px beside the sidebar, the controls drop to their own line instead of
+    // overlapping it. The wrap also puts the alert (md:basis-full) on a line of its own.
+    <li className="flex flex-col gap-2 py-3 md:flex-row md:flex-wrap md:items-center md:gap-3">
+      <div className="min-w-0 md:flex-[1_0_19rem]">
         <p className="truncate text-sm font-medium text-ink" title={label}>
           {label}
         </p>
@@ -169,14 +170,15 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
       </div>
       {current ? (
         <div className="flex items-center gap-2">
-          {/* sm:w-48 sets 192px from sm, but from md selectClass's md:w-auto outranks it, so
-              md:min-w-48 and md:max-w-48 pin the select at 192px there. */}
+          {/* Below md it fills the row beside Remove. From md selectClass's md:w-auto would size it
+              to its longest category, so md:min-w-48 and md:max-w-48 pin it at 192px; a second md:
+              width beside md:w-auto would leave the two to their order in the stylesheet. */}
           <select
             value={pending ?? rule.categoryId}
             onChange={change}
             disabled={busy}
             aria-label={`Category for ${label}`}
-            className={`${selectClass} min-w-0 flex-1 sm:w-48 sm:flex-none md:min-w-48 md:max-w-48`}
+            className={`${selectClass} min-w-0 flex-1 md:flex-none md:min-w-48 md:max-w-48`}
           >
             {options.map((c) => (
               <option key={c.id} value={c.id}>
@@ -200,13 +202,13 @@ function RuleRow({ rule, categories }: { rule: RuleView; categories: RuleCategor
         // query loads in full even from itself; one with a #fragment would only have jumped within it.
         <p className="text-xs text-muted">
           This category was just deleted.{' '}
-          <a href={CATEGORY_RULES_HREF} className="font-medium underline">
+          <a href={CATEGORY_RULES_HREF} className={`${tapTargetClass} font-medium underline`}>
             Reload the page.
           </a>
         </p>
       )}
       {error && (
-        <p role="alert" className="text-xs text-coral sm:basis-full">
+        <p role="alert" className="text-xs text-coral md:basis-full">
           {error}
         </p>
       )}

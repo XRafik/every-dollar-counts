@@ -8,6 +8,7 @@ import { money, shortDate } from '@/lib/format'
 import { presentTransaction, TONE_CLASS } from '@/lib/transaction-presentation'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
+import { tapTargetClass } from '@/components/ui/styles'
 import { CategoryPicker } from '@/components/CategoryPicker'
 import { learnedText } from '@/components/LearnedMarker'
 import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
@@ -95,7 +96,7 @@ export function TransactionCard({
         type="button"
         onClick={() => setOpen(true)}
         aria-label={`${name}, ${categoryLabel}${learned ? `, learned from ${merchant}` : ''}${suggested ? ', suggested by Jev' : ''}, ${money(display)}${shareLabel} — edit`}
-        className="flex w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2"
+        className="flex min-h-[44px] w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2 md:min-h-0"
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium text-ink">{name}</span>
@@ -193,7 +194,7 @@ export function TransactionCard({
                           <>
                             {' '}
                             {/* scroll={false}: the router's own scroll would run after ScrollToSection's and take Settings back to its top. */}
-                            <Link href={CATEGORY_RULES_HREF} scroll={false} className="font-medium text-emerald hover:text-emerald-600">
+                            <Link href={CATEGORY_RULES_HREF} scroll={false} className={`${tapTargetClass} font-medium text-emerald hover:text-emerald-600`}>
                               Manage in Settings
                             </Link>
                           </>

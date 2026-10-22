@@ -13,6 +13,8 @@ import {
 } from 'recharts'
 import { CHART_SERIES } from '@/lib/chart-palette'
 import { capCategories } from '@/lib/trends'
+import { tapTargetClass } from '@/components/ui/styles'
+import { WhenSized } from '@/components/ui/WhenSized'
 
 // Two equal windows side by side, per category. The keys stay `current`/`previous`; the window
 // names arrive as `name` on each Bar, which is what Legend and Tooltip display. They used to be
@@ -40,8 +42,10 @@ export function PeriodOverPeriodChart({
       {/* Horizontal below `md`. recharts calls this layout="vertical" — the name describes the
           axis arrangement, not the bars. Copied from SpendByCategoryChart, which is already this
           shape and already works on a phone. No rotated labels means §1.4's collision cannot
-          recur by construction. */}
-      <div className="md:hidden" style={{ width: '100%', height: phoneHeight }}>
+          recur by construction.
+          Each chart is in a WhenSized box, so the one CSS hides is never mounted: mounted, it
+          measured 0x0 and recharts warned on every load (#116). */}
+      <WhenSized className="md:hidden" style={{ width: '100%', height: phoneHeight }}>
         <ResponsiveContainer>
           <BarChart data={phoneRows} layout="vertical" margin={{ left: 4, right: 16 }} barGap={2}>
             <CartesianGrid horizontal={false} stroke="#e6e9e3" />
@@ -79,13 +83,13 @@ export function PeriodOverPeriodChart({
             <Bar dataKey="current" name={currentLabel} fill={CHART_SERIES.primary} radius={[0, 4, 4, 0]} maxBarSize={14} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </WhenSized>
       {other && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          className="mt-2 text-sm font-medium text-emerald hover:text-emerald-600 md:hidden"
+          className={`${tapTargetClass} mt-2 text-sm font-medium text-emerald hover:text-emerald-600 md:hidden`}
         >
           {expanded ? 'Show fewer' : `Show all ${data.length} categories`}
         </button>
@@ -93,7 +97,7 @@ export function PeriodOverPeriodChart({
 
       {/* Unchanged from before this stage apart from the series colour (§5.1). The rotated labels
           stay here: at desktop width they have the room they never had on a phone. */}
-      <div className="hidden md:block" style={{ width: '100%', height: 340 }}>
+      <WhenSized className="hidden md:block" style={{ width: '100%', height: 340 }}>
         <ResponsiveContainer>
           <BarChart data={data} margin={{ left: 20, right: 20, bottom: 60 }} barGap={4}>
             <CartesianGrid vertical={false} stroke="#e6e9e3" />
@@ -132,7 +136,7 @@ export function PeriodOverPeriodChart({
             <Bar dataKey="current" name={currentLabel} fill={CHART_SERIES.primary} radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </WhenSized>
     </>
   )
 }

@@ -122,6 +122,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
 import { blocks, bannerText, balancesNote } from './helpers/banner'
+import { controlWithText, expectTapTarget } from './helpers/tap-target'
 import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
 
 type Params = { q?: string; account?: string; category?: string; month?: string; flow?: string; page?: string }
@@ -614,5 +615,42 @@ describe('Transactions with none yet (#185)', () => {
     expect(emptyText(await render({ month: '2026-08' }))).toBe(
       'No transactions to show for this view. (Balances-only accounts like a mortgage have none.)'
     )
+  })
+})
+
+// §7's 44px on a phone (#122). Each of these is a bare link with its own classes, not one of the
+// shared controls, and was 16-20px tall at 390px: the paging links 30.7x16.5, Clear 38x19.
+describe('Transactions tap targets (#122)', () => {
+  it('gives both paging links a 44px hit area', async () => {
+    // Page 2 of 450: both a newer and an older page.
+    results.transactions = { ...results.transactions, count: 450 }
+    const tree = await render({ page: '2' })
+    expectTapTarget(controlWithText(tree, '← Newer').props.className)
+    expectTapTarget(controlWithText(tree, 'Older →').props.className)
+  })
+
+  it("gives the filter chip's Clear a 44px hit area", async () => {
+    expectTapTarget(controlWithText(await render({ account: 'acc-1' }), 'Clear').props.className)
+  })
+
+  it("gives the empty list's Connect a bank a 44px hit area", async () => {
+    results.transactions = { data: [], count: 0, error: null }
+    expectTapTarget(controlWithText(await render(), 'Connect a bank').props.className)
+  })
+})
+
+// The search field fills its row below md and is 16rem from md up, where the app switches between
+// its phone and desktop layouts (#123). It narrowed at sm, so at 640-767px it was 16rem beside the
+// phone layout of everything around it.
+describe('Transactions layout', () => {
+  it('narrows the search field at md, not sm', async () => {
+    type El = { props: { children?: unknown; className?: string; name?: string } }
+    const header = blocks(await render()).find((b) => b.type === PageHeader)!
+    const form = header.props.actions as El
+    const holder = ([] as unknown[])
+      .concat(form.props.children)
+      .flat()
+      .find((c) => (c as El | null)?.props?.children && ((c as El).props.children as El).props?.name === 'q') as El
+    expect(holder.props.className).toBe('w-full md:w-64')
   })
 })

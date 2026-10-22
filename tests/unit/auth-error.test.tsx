@@ -2,7 +2,9 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
 import { isInviteOnlyRejection } from '@/lib/authError'
 import AuthCodeError from '@/app/auth/auth-code-error/page'
+import NotInvited from '@/app/auth/not-invited/page'
 import SignInTryAgain from '@/app/auth/try-again/page'
+import { expectTapTarget } from './helpers/tap-target'
 
 // Auto-cleanup only registers when vitest runs with globals; this suite does not.
 afterEach(() => {
@@ -74,5 +76,24 @@ describe('SignInTryAgain page', () => {
     render(<SignInTryAgain />)
     expect(screen.queryByText(/invite/i)).toBeNull()
     expect(screen.queryByText(/expired|invalid/i)).toBeNull()
+  })
+})
+
+// The sweep after #122. These pages sit outside the app's shell, mostly met on a phone from an email
+// or the installed app, and each way back from them was a 20px-tall text link.
+describe('sign-in pages: tap targets (#122)', () => {
+  it('gives Back to sign in a 44px hit area on each page that has it', () => {
+    for (const Page of [SignInTryAgain, NotInvited, AuthCodeError]) {
+      render(<Page />)
+      expectTapTarget(screen.getByRole('link', { name: 'Back to sign in' }).className)
+      cleanup()
+    }
+  })
+
+  it('gives both invite-only links a 44px hit area', async () => {
+    window.location.hash = '#error=access_denied&error_code=signup_disabled'
+    render(<AuthCodeError />)
+    expectTapTarget((await screen.findByRole('link', { name: 'Sign in with a different account' })).className)
+    expectTapTarget(screen.getByRole('link', { name: 'How to run your own copy' }).className)
   })
 })

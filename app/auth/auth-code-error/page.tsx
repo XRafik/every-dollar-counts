@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useSyncExternalStore } from 'react'
 import { Card } from '@/components/ui/Card'
+import { tapTargetClass } from '@/components/ui/styles'
 import { isInviteOnlyRejection } from '@/lib/authError'
 
 // The fragment never changes while the page is mounted; there is nothing to subscribe to.
@@ -33,12 +34,12 @@ export default function AuthCodeError() {
                 Sign-in now asks which account (#149), so this is their way back, and in the
                 installed app there is no address bar to get back any other way. */}
             <div className="mt-4 flex flex-col items-center gap-2">
-              <Link href="/login" className="text-sm font-medium text-emerald hover:text-emerald-600">
+              <Link href="/login" className={`${tapTargetClass} text-sm font-medium text-emerald hover:text-emerald-600`}>
                 Sign in with a different account
               </Link>
               <a
                 href="https://github.com/smilne3/every-dollar-counts#running-it-locally"
-                className="text-sm font-medium text-emerald hover:text-emerald-600"
+                className={`${tapTargetClass} text-sm font-medium text-emerald hover:text-emerald-600`}
               >
                 How to run your own copy
               </a>
@@ -52,7 +53,7 @@ export default function AuthCodeError() {
             </p>
             <Link
               href="/login"
-              className="mt-4 inline-block text-sm font-medium text-emerald hover:text-emerald-600"
+              className={`${tapTargetClass} mt-4 text-sm font-medium text-emerald hover:text-emerald-600`}
             >
               Back to sign in
             </Link>

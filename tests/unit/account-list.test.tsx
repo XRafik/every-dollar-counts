@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { AccountList } from '@/components/AccountList'
+import { expectTapTarget } from './helpers/tap-target'
 
 afterEach(cleanup)
 
@@ -83,6 +84,30 @@ describe('AccountList', () => {
     expect(screen.getByRole('button', { name: 'Show fewer' })).toBeTruthy()
   })
 
+  // #107: the eight revealed cards used to come BEFORE the control in the document, so a screen
+  // reader reading on from "Show all 12" moved past what it had just revealed. A disclosure's
+  // content follows its control: the cards it follows, then the control, then the cards it reveals.
+  it('puts the control between the cards it follows and the cards it reveals', () => {
+    const { container } = render(<AccountList accounts={accounts} />)
+    const control = screen.getByRole('button', { name: 'Show all 12' })
+    const follows = (a: Node, b: Node) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    expect(follows(nameLine(3), control)).toBe(true)
+    expect(follows(control, wrapperOf(4)!)).toBe(true)
+    // In the grid, so it holds its place under the thumb when the cards below it appear.
+    expect(container.firstElementChild!.contains(control)).toBe(true)
+    fireEvent.click(control)
+    expect(follows(screen.getByRole('button', { name: 'Show fewer' }), nameLine(4))).toBe(true)
+  })
+
+  // Inside the grid, the control is a grid item. A row of its own whatever the column count, and
+  // its own width rather than the row's, so it looks and focuses as it did outside the grid.
+  it('gives the control a row of its own, at its own width', () => {
+    render(<AccountList accounts={accounts} />)
+    const classes = screen.getByRole('button', { name: 'Show all 12' }).className.split(/\s+/)
+    expect(classes).toContain('col-span-full')
+    expect(classes).toContain('justify-self-start')
+  })
+
   // Four or fewer is already the whole list, so a control that reveals nothing must not appear.
   it('offers no control when everything is already shown', () => {
     render(<AccountList accounts={accounts.slice(0, 4)} />)
@@ -108,12 +133,21 @@ describe('AccountList', () => {
     expect(screen.getByRole('button', { name: 'Show all 12' }).className).toContain('md:hidden')
   })
 
+  // #122: the control exists only on a phone, where §7 asks for 44px, and it was 20px tall there.
+  it('gives the control a 44px hit area', () => {
+    render(<AccountList accounts={accounts} />)
+    expectTapTarget(screen.getByRole('button', { name: 'Show all 12' }).className)
+  })
+
   // This string used to live in app/(app)/dashboard/page.tsx and came across untouched. Moving a
-  // class string is exactly when it can drift without anything noticing.
-  it('keeps the grid it was lifted out of the page with', () => {
+  // class string is exactly when it can drift without anything noticing. The grid is the list's
+  // root: with the control inside it (#107) there is nothing else to wrap. Two across from md, where
+  // the app switches between its phone and desktop layouts (#123): at sm, 640-767px got two cards
+  // across under a one-column phone layout.
+  it('keeps the grid it was lifted out of the page with, switching at md', () => {
     const { container } = render(<AccountList accounts={accounts} />)
-    const grid = container.firstElementChild!.firstElementChild!
-    expect(grid.className).toBe('grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3')
+    expect(container.childElementCount).toBe(1)
+    expect(container.firstElementChild!.className).toBe('grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3')
   })
 
   it('renders nothing rather than an empty shell when there are no accounts', () => {

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { Card } from '@/components/ui/Card'
+import { tapTargetClass } from '@/components/ui/styles'
 
 export default function NotInvited() {
   return (
@@ -12,7 +13,7 @@ export default function NotInvited() {
         </p>
         <Link
           href="/login"
-          className="mt-4 inline-block text-sm font-medium text-emerald hover:text-emerald-600"
+          className={`${tapTargetClass} mt-4 text-sm font-medium text-emerald hover:text-emerald-600`}
         >
           Back to sign in
         </Link>

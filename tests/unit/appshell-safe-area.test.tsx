@@ -40,6 +40,25 @@ describe('AppShell safe areas', () => {
     expect(shell().main).toContain('md:pb-10')
   })
 
+  // The tab bar is the phone's: from md up the sidebar takes its place.
+  it('hides the tab bar from md up', () => {
+    expect(shell().tabBar.split(/\s+/)).toContain('md:hidden')
+  })
+
+  // Each tab is a 44px tap target by its own classes (#122), not only by its padding, icon and label,
+  // which a later change could shrink. The floor is released at md, as every floor in the app is,
+  // though the bar is hidden there.
+  it('gives each tab a 44px floor below md', () => {
+    const { container } = render(
+      <AppShell householdName="Milne" userEmail="a@b.c">
+        <p>content</p>
+      </AppShell>
+    )
+    const tabs = [...container.querySelectorAll('nav.fixed.bottom-0 a')]
+    expect(tabs).toHaveLength(7)
+    for (const tab of tabs) expect(tab.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
+  })
+
   // An iPhone in landscape is wider than md, so it gets the sidebar, with the notch on one side.
   it('keeps the sidebar and the content clear of a landscape notch', () => {
     const { aside, main } = shell()

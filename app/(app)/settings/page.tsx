@@ -12,6 +12,7 @@ import { listManualAssets } from '@/lib/manual-assets'
 import { CategoryManager, type CategoryUsage } from '@/components/CategoryManager'
 import { Card } from '@/components/ui/Card'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { tapTargetClass } from '@/components/ui/styles'
 import { fetchCategoryContext, readTransactionsForCounts } from '@/lib/category-context'
 import { buildCategoryContext, kindOf } from '@/lib/category-rules'
 import { categoryUsage, deleteImpact } from '@/lib/category-views'
@@ -141,7 +142,7 @@ function unavailable(message: string, href = '/settings') {
   return (
     <p role="alert" className="text-sm text-coral">
       {message}{' '}
-      <a href={href} className="font-medium underline">
+      <a href={href} className={`${tapTargetClass} font-medium underline`}>
         Try again.
       </a>
     </p>

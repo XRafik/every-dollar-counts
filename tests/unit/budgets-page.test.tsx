@@ -103,6 +103,7 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
 import { blocks, bannerText } from './helpers/banner'
+import { controlWithText, expectTapTarget } from './helpers/tap-target'
 import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
 
 const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
@@ -293,4 +294,11 @@ it('tells BudgetEditor when it read the limits, timed from before the read', asy
   const props = findProps(await BudgetsPage(), BudgetEditor)
   expect(props?.initialLimits).toEqual({ 'Food & Drink': 400 })
   expect(props?.readAt).toBe(before)
+})
+
+// #122: the line under the header sends the reader to Settings, and its link was 20px tall on a
+// phone. Inside a sentence, so on a phone its line grows to 44px with it.
+it('gives the Settings → Categories link a 44px hit area', async () => {
+  vi.setSystemTime(new Date('2026-09-15T12:00:00Z'))
+  expectTapTarget(controlWithText(await BudgetsPage(), 'Settings → Categories').props.className)
 })

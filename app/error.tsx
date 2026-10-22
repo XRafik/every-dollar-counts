@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { Card } from '@/components/ui/Card'
+import { tapTargetClass } from '@/components/ui/styles'
 
 // The boundary above app/(app)/layout.tsx (#143). A segment's error.tsx never wraps that segment's
 // own layout (Next's error.js docs), so what the layout throws passes app/(app)/error.tsx and lands
@@ -39,7 +40,7 @@ export default function RootError({ error, retry }: { error: unknown; retry: () 
         <button
           type="button"
           onClick={() => retry()}
-          className="mt-4 inline-block text-sm font-medium text-emerald hover:text-emerald-600"
+          className={`${tapTargetClass} mt-4 text-sm font-medium text-emerald hover:text-emerald-600`}
         >
           Try again
         </button>

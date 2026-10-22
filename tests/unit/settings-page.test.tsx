@@ -94,6 +94,7 @@ import { ScrollToSection } from '@/components/ScrollToSection'
 import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { txnRows } from '../stubs/postgrest-pages'
 import { catalogFingerprint } from '@/lib/category-rules'
+import { controlWithText, expectTapTarget } from './helpers/tap-target'
 
 const FOOD = { id: 'c-food', name: 'Food & Drink', pfc_primary: 'FOOD_AND_DRINK', sort_order: 0 }
 const GROCERY = { id: 'c-grocery', name: 'Grocery', pfc_primary: null, sort_order: 1 }
@@ -200,6 +201,15 @@ describe('Settings: a failed read says so in its own card (#91)', () => {
     expect(findProps(tree, BankList)).not.toBeNull()
     expect(findProps(tree, CategoryManager)).not.toBeNull()
     expect(log).toHaveBeenCalledWith('[settings] could not load the home value', new Error('could not read manual assets: boom'))
+  })
+
+  // #122's comment: Try again. is the way back from a failed card, in the installed app too (#139),
+  // and was a 20px-tall link on a phone.
+  it('gives Try again. a 44px hit area', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    results.manual_assets = { data: null, error: { message: 'boom' } }
+    const home = card(await SettingsPage(), 'Home value')
+    expectTapTarget(controlWithText(home, 'Try again.').props.className)
   })
 
   it('hands the Home value card the stored value when the read succeeds', async () => {

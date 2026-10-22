@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { Card } from '@/components/ui/Card'
+import { tapTargetClass } from '@/components/ui/styles'
 
 // Route-segment error boundary for everything under app/(app) — dashboard, transactions, budgets,
 // reimbursements, trends, goals, settings. Without this, one failed query (fetchReceivable throws
@@ -52,7 +53,7 @@ export default function AppSegmentError({
         <button
           type="button"
           onClick={() => retry()}
-          className="mt-4 inline-block text-sm font-medium text-emerald hover:text-emerald-600"
+          className={`${tapTargetClass} mt-4 text-sm font-medium text-emerald hover:text-emerald-600`}
         >
           Try again
         </button>
