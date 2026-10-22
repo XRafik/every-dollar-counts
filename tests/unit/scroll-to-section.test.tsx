@@ -55,8 +55,9 @@ describe('ScrollToSection', () => {
     expect(scrolled).toHaveBeenCalledTimes(1)
   })
 
-  // The links pass scroll={false}, so after a tap the window still has the last page's offset, and
-  // the router does not scroll. The card is this component's to bring into view wherever the page is.
+  // The links pass scroll={false}, so after a tap the window may still have the last page's offset,
+  // and the router does not scroll. The card is this component's to bring into view wherever the
+  // page is.
   it('scrolls wherever the page was left', () => {
     const scrolled = spyOnScroll()
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 900 })
@@ -64,8 +65,10 @@ describe('ScrollToSection', () => {
     expect(scrolled).toHaveBeenCalledTimes(1)
   })
 
-  // In a layout effect, so the page is first painted on the card rather than jumping to it. A
-  // parent's layout effects run after its children's, and all of them before the paint.
+  // In a layout effect, so after a tap in the app the page is first painted on the card rather than
+  // jumping to it. (After a full page load the server's HTML is painted first, and this runs at
+  // hydration.) A parent's layout effects run after its children's, and all of them before the
+  // paint.
   it('scrolls as the card mounts, before the page is painted', () => {
     const scrolled = spyOnScroll()
     window.history.replaceState(null, '', CATEGORY_RULES_HREF)
@@ -85,8 +88,8 @@ describe('ScrollToSection', () => {
     expect(scrolledBeforePaint).toBe(true)
   })
 
-  // A #fragment is the browser's, as any plain fragment is: an old /settings#category-rules address
-  // is scrolled by the browser to the card's id, not by this.
+  // An old /settings#category-rules address is left to the browser's own fragment scroll, which can
+  // run before the card has streamed in.
   it.each([
     '/settings',
     '/settings?section=categories',

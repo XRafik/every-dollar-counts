@@ -192,7 +192,7 @@ export function TransactionCard({
                         {!busy && (
                           <>
                             {' '}
-                            {/* scroll={false}: Settings scrolls to the card itself (ScrollToSection). */}
+                            {/* scroll={false}: the router's own scroll would run after ScrollToSection's and take Settings back to its top. */}
                             <Link href={CATEGORY_RULES_HREF} scroll={false} className="font-medium text-emerald hover:text-emerald-600">
                               Manage in Settings
                             </Link>

@@ -16,7 +16,7 @@ export function LearnedMarker({ category, merchant }: { category: string; mercha
   return (
     <Link
       href={CATEGORY_RULES_HREF}
-      // Settings scrolls to the card itself (ScrollToSection); the router must not scroll as well.
+      // The router's own scroll would run after ScrollToSection's and take Settings back to its top.
       scroll={false}
       title={text}
       aria-label={text}

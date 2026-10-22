@@ -243,7 +243,7 @@ export default async function SettingsPage() {
         ) : (
           categoriesUnavailable
         )}
-        {/* Where a link to /settings?section=category-rules opens the page (#156). */}
+        {/* Where CATEGORY_RULES_HREF opens the page (#156). */}
         <ScrollToSection id="category-rules" />
       </Card>
     </div>
