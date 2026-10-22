@@ -164,6 +164,8 @@ Net worth renders **exact and full width**, so §1.3 cannot recur no matter how 
 
 Mechanically this means **`StatCard` gains a variant** — `hero` (exact, full width) and `compact` (rounded) — rather than each caller hand-rolling its own type sizes. That is what makes the §9 formatting test possible to write, and it keeps the rounding rule in one place instead of four.
 
+> **Note (#137):** #136 replaced the phone tiles with StatRows, so the compact tile no longer renders on a phone; it now shows its figure exactly, and the whole-dollar rounding lives in StatRows.
+
 This treats the tiles by importance rather than equally, which matches the stated phone task: open it, see where things stand, close it.
 
 > **Superseded on 2026-10-06 (PR #136): the three below the hero are rows, not tiles.** Three across left each figure about 70px of text width at 390px. Once Saved went negative and gained an average note (#126), the owner's iPhone wrapped that tile's note over five lines and broke "-$13,995" after the minus. iOS renders text wider than Chromium, so a local render did not show it. Below `md` the three are now one card with a row each (`components/ui/StatRows.tsx`): label and note on the left, the whole-dollar figure on the right, never wrapping. From `md` up the tiles are as described here. The rounding rule is unchanged; it now lives in StatRows for the phone.

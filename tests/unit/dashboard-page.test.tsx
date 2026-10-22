@@ -726,6 +726,25 @@ describe('Dashboard average savings (#126)', () => {
     expect(classes).toContain('md:hidden')
   })
 
+  // #137: a compact tile has no phone presentation any more, which holds only while every compact
+  // tile sits under the wrapper hidden below md. The hero, outside it, is the one tile a phone shows.
+  it('puts every compact tile under the wrapper hidden below md', async () => {
+    const tree = await render()
+    const wrappers: unknown[] = []
+    const walk = (n: unknown): void => {
+      if (n == null || typeof n !== 'object') return
+      if (Array.isArray(n)) return n.forEach(walk)
+      const el = n as { props?: { className?: unknown; children?: unknown } }
+      if (el.props?.className === 'hidden md:contents') wrappers.push(el)
+      if (el.props?.children) walk(el.props.children)
+    }
+    walk(tree)
+    expect(wrappers).toHaveLength(1)
+    const compact = findStatCards(tree).filter((c) => c.props.variant === 'compact')
+    expect(compact).toHaveLength(3)
+    expect(findStatCards(wrappers[0])).toEqual(compact)
+  })
+
   // The read is seven months; the chart under "Last 6 months" must still get six.
   it('still charts six months', async () => {
     results.categories = income
