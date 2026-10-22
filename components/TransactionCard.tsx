@@ -95,7 +95,7 @@ export function TransactionCard({
         type="button"
         onClick={() => setOpen(true)}
         aria-label={`${name}, ${categoryLabel}${learned ? `, learned from ${merchant}` : ''}${suggested ? ', suggested by Jev' : ''}, ${money(display)}${shareLabel} — edit`}
-        className="flex min-h-[44px] w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2"
+        className="flex min-h-[44px] w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2 md:min-h-0"
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium text-ink">{name}</span>

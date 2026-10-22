@@ -36,5 +36,7 @@ export function Button({
   size?: Size
   ref?: Ref<HTMLButtonElement> // React 19 passes ref as a plain prop to function components
 }) {
-  return <button className={buttonClass(variant, size, className)} {...props} />
+  // The spread goes first, so nothing in it can replace the classes: className is taken out of it
+  // above, and scripts/check-invariants.mjs fails a spread after a control's className (#122).
+  return <button {...props} className={buttonClass(variant, size, className)} />
 }

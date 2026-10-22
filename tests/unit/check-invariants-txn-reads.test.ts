@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
-import { TAP_TARGETS_ALLOWED } from '../../scripts/check-invariants.mjs'
+import { TAP_TARGETS_ALLOWED, PASS_THROUGH } from '../../scripts/check-invariants.mjs'
 
-// The tripwire for #69, run against a scratch tree so each case is one file and nothing else.
-// The script scans app/, lib/ and components/ under its working directory.
+// The tripwire for #69, run against a scratch tree so each case is one file, plus the files the
+// allowlist and PASS_THROUGH name. The script scans app/, lib/ and components/ under its working
+// directory.
 //
 // Both paths are found from this file, not from the working directory: run from another checkout,
 // a path resolved from the working directory runs that checkout's script, and its tests pass or
@@ -17,13 +18,15 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const SCRIPT = join(REPO, 'scripts', 'check-invariants.mjs')
 let dir: string
 
-// The scratch tree holds the page under test, and a copy of each file tripwire 5's allowlist names
-// (#122): the script reads the whole tree, so an entry for a file not in it fails as stale.
-function check(source: string, { allowlisted = true } = {}) {
+// The scratch tree holds the page under test, and a copy of each file tripwire 5's allowlist and
+// PASS_THROUGH name (#122): the script reads the whole tree, so an entry for a file not in it fails
+// as stale.
+const NAMED = [...TAP_TARGETS_ALLOWED, ...PASS_THROUGH].map((e) => e.file)
+function check(source: string, { withNamed = true } = {}) {
   dir = mkdtempSync(join(tmpdir(), 'invariants-'))
   for (const d of ['app/(app)/x', 'lib', 'components']) mkdirSync(join(dir, d), { recursive: true })
-  if (allowlisted) {
-    for (const { file } of TAP_TARGETS_ALLOWED) {
+  if (withNamed) {
+    for (const file of NAMED) {
       mkdirSync(dirname(join(dir, file)), { recursive: true })
       copyFileSync(join(REPO, file), join(dir, file))
     }
@@ -195,21 +198,24 @@ const { data, error } = await readAllRows(
 describe('check-invariants: tap targets (#122)', () => {
   it('fails a page with a text link that has no 44px rule, and passes it with one', () => {
     const page = (classes: string) =>
-      `export default function Page() {\n  return <p>Use <a href="/settings" className={${classes}}>Settings</a>.</p>\n}\n`
+      `import { tapTargetClass } from '@/components/ui/styles'\nexport default function Page() {\n  return <p>Use <a href="/settings" className={${classes}}>Settings</a>.</p>\n}\n`
     const bare = check(page(`'text-emerald'`))
     expect(bare.ok).toBe(false)
-    expect(bare.out).toContain('app/(app)/x/page.tsx:2')
+    expect(bare.out).toContain('app/(app)/x/page.tsx:3')
     expect(bare.out).toContain('[tap-target]')
     rmSync(dir, { recursive: true, force: true })
-    expect(check(page('`${tapTargetClass} text-emerald`')).ok).toBe(true)
+    const ruled = check(page('`${tapTargetClass} text-emerald`'))
+    expect(ruled.ok, ruled.out).toBe(true)
   })
 
-  // The script reads the whole tree, so an allowlist entry for a file that is not in it names a file
-  // deleted or renamed since, and fails rather than outliving its control.
-  it('fails when a file the allowlist names is not in the tree', () => {
-    const r = check(`export const ok = true\n`, { allowlisted: false })
+  // The script reads the whole tree, so an entry in the allowlist or PASS_THROUGH for a file that is
+  // not in it names a file deleted or renamed since, and fails rather than outliving its control.
+  // The allowlist is empty, so PASS_THROUGH is what this exercises.
+  it('fails when a file the allowlist or PASS_THROUGH names is not in the tree', () => {
+    expect(PASS_THROUGH.length).toBeGreaterThan(0)
+    const r = check(`export const ok = true\n`, { withNamed: false })
     expect(r.ok).toBe(false)
-    for (const { file } of TAP_TARGETS_ALLOWED) expect(r.out).toContain(`${file}:1`)
+    for (const file of NAMED) expect(r.out).toContain(`${file}:1`)
     expect(r.out).toContain('no such file')
   })
 })

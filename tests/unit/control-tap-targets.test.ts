@@ -56,11 +56,13 @@ describe('control tap targets', () => {
 
   // #122: the text links and text buttons ("Show all", "Try again", paging) bypassed the three
   // classes above and were 16-20px tall on a phone. The shared fourth class grows the hit area and
-  // nothing else: no font size, padding or colour, so the text looks as it did.
+  // nothing else: no font size, padding or colour, so the text looks as it did. Its `inline-flex` is
+  // not released at md: at every width the control is one box, which never breaks across lines.
   it('gives a text control a 44px hit area below md and releases it at md', () => {
     expectTapTarget(tapTargetClass)
   })
 
+  // The exact string, so nothing that resizes the text (a font size, a padding) can join it unseen.
   it('leaves the text itself alone', () => {
     expect(tapTargetClass).toBe('inline-flex min-h-[44px] min-w-[44px] items-center md:min-h-0 md:min-w-0')
   })

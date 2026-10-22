@@ -4,8 +4,9 @@ import { expect } from 'vitest'
 import Link from 'next/link'
 
 // tapTargetClass's tokens (components/ui/styles.ts), checked one by one so a failure names the one
-// missing: the hit area grows below `md`, both minimums are released at `md`, and the text is not
-// resized. Split on whitespace, so `md:min-h-0` cannot pass for `min-h-[44px]` or the reverse.
+// missing: the hit area grows below `md`, and both minimums are released at `md`. Split on
+// whitespace, so `md:min-h-0` cannot pass for `min-h-[44px]` or the reverse. It does not check that
+// the text keeps its size: the exact-string test in tests/unit/control-tap-targets.test.ts does.
 export function expectTapTarget(className: unknown) {
   const classes = String(className ?? '').split(/\s+/)
   for (const token of ['inline-flex', 'items-center', 'min-h-[44px]', 'min-w-[44px]', 'md:min-h-0', 'md:min-w-0']) {

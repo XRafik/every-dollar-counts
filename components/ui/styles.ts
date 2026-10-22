@@ -15,6 +15,8 @@ export const labelClass = 'text-sm font-medium text-ink'
 // A control that is only its text: a text link, or a text button such as "Show all". Below `md` its
 // hit area grows to §7's 44px and the text stays the size it is, the way ReimbursableCheckbox's
 // label and ReimbursableEditor's ⋮ grow theirs; `items-center` keeps the text centred in the taller
-// box. Each of these was 16-20px tall on a phone (#122). Released at `md`, where the text sets the
-// height as it always has. A link inside a sentence makes its line 44px tall on a phone.
+// box. Each of these was 16-20px tall on a phone (#122). The minimums are released at `md`, where
+// the text sets the height as it always has. `inline-flex` is not: at every width the control is one
+// box, which never breaks across lines, so a link inside a sentence moves to the next line whole
+// rather than wrapping. On a phone it makes its line 44px tall.
 export const tapTargetClass = 'inline-flex min-h-[44px] min-w-[44px] items-center md:min-h-0 md:min-w-0'

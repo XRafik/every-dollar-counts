@@ -67,10 +67,13 @@ describe('TransactionCard', () => {
   })
 
   // The row is the phone's control for its transaction, a 44px tap target by its own classes (#122),
-  // not only by its two lines and padding, which a later change could shrink.
-  it('gives the row a 44px floor', () => {
+  // not only by its two lines and padding, which a later change could shrink. The floor is released
+  // at md, as every floor in the app is: the transactions page shows these cards only below md.
+  it('gives the row a 44px floor below md', () => {
     renderCard()
-    expect(screen.getByRole('button', { name: /Joe S Den/ }).className.split(/\s+/)).toContain('min-h-[44px]')
+    expect(screen.getByRole('button', { name: /Joe S Den/ }).className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['min-h-[44px]', 'md:min-h-0'])
+    )
   })
 
   // Without this the mark is invisible until the row is opened, which makes "what have I already

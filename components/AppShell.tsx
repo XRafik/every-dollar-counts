@@ -141,7 +141,7 @@ export function AppShell({
             <Link
               key={href}
               href={href}
-              className={`flex min-h-[44px] min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${
+              className={`flex min-h-[44px] min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors md:min-h-0 ${
                 active ? 'text-emerald' : 'text-faint hover:text-ink'
               }`}
             >
