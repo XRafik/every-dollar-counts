@@ -41,6 +41,20 @@ describe('app/(app)/loading.tsx', () => {
     expect(container.querySelectorAll('a, button, input, select, textarea, [tabindex]')).toHaveLength(0)
   })
 
+  // With Reduce Motion the pulse stops, and what is left must still read as a placeholder: a white
+  // card with a border under two faint bars looked like a page that had loaded empty. So every shape
+  // is filled like the bars, and none is a white card or has a border.
+  it('draws every shape filled, none as a white card', () => {
+    const { container } = render(<Loading />)
+    const shapes = [...container.querySelectorAll('[aria-hidden="true"] *')].filter((el) => el.children.length === 0)
+    expect(shapes).toHaveLength(3)
+    for (const shape of shapes) {
+      const utilities = (shape.getAttribute('class') ?? '').split(/\s+/).filter(Boolean).map((c) => parse(c).utility)
+      expect(utilities.filter((u) => /^bg-line(\/\d+)?$/.test(u))).toHaveLength(1)
+      expect(utilities.filter((u) => /^(bg-(surface|white|canvas)|border)/.test(u))).toEqual([])
+    }
+  })
+
   // It renders in <main>, between the shell's sticky top bar and its fixed tab bar (AppShell). Taken
   // out of the flow it could cover either, and anything wider than the page would scroll a phone
   // sideways. A class counts at every screen size and in every state it has a variant for.

@@ -6,7 +6,9 @@
 //
 // Plain shapes, since it stands in for every page: a figure here would be one with no "isn't
 // syncing" banner beside it (#135), and a word or link one that no page asked for. The title bar has
-// PageHeader's title's size and place, so the title does not move when the page arrives.
+// PageHeader's title's size and place, so the title does not move when the page arrives. Every shape
+// is filled, with no white card or border, so with Reduce Motion on, when the pulse stops, it still
+// reads as a placeholder rather than a page that loaded empty.
 //
 // Keep it the only loading boundary under app/(app), and keep <Suspense> away from a card a link
 // scrolls to. Next's router scrolls a tap in the app to a link's #target from the page's own
@@ -32,7 +34,7 @@ export default function Loading() {
           <div className="h-8 w-40 max-w-full rounded-lg bg-line" />
           <div className="h-4 w-56 max-w-full rounded-md bg-line/60" />
         </div>
-        <div className="h-40 rounded-card border border-line bg-surface" />
+        <div className="h-40 rounded-card bg-line" />
       </div>
     </div>
   )
