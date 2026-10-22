@@ -104,7 +104,8 @@ describe('WhenSized', () => {
     expect(life.mounted).toBe(2)
   })
 
-  // recharts warns when either side is 0, so a box needs both.
+  // recharts warns only when both sides are 0, but it draws nothing unless both are positive, so a
+  // box needs both.
   it.each([
     [800, 0],
     [0, 340],
@@ -112,6 +113,19 @@ describe('WhenSized', () => {
     const el = box()
     resize(el, width, height)
     expect(screen.queryByText('chart')).toBeNull()
+  })
+
+  // A browser without ResizeObserver cannot size a chart at all, so nothing is lost by drawing none;
+  // what matters is that the page around it still renders.
+  it('renders the empty box, and does not throw, where there is no ResizeObserver', () => {
+    delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver
+    let el: Element | undefined
+    expect(() => {
+      el = box()
+    }).not.toThrow()
+    expect(el!.className).toBe('hidden md:block')
+    expect(el!.childElementCount).toBe(0)
+    expect(life.mounted).toBe(0)
   })
 
   it('stops observing the box when it unmounts', () => {
