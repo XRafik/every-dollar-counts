@@ -80,6 +80,7 @@ vi.mock('@/lib/plaid-slots', () => ({ countSlotsUsed: async () => null, LIFETIME
 // For the tests that render the bank list the page hands out, to read the card as the person does.
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
 
+import { Suspense } from 'react'
 import { render, screen, cleanup } from '@testing-library/react'
 import SettingsPage from '@/app/(app)/settings/page'
 import { TimezoneCard } from '@/components/TimezoneCard'
@@ -523,5 +524,35 @@ describe('Settings categories and rules', () => {
     expect(alertText(tree)).toContain("Couldn't load categories and rules.")
     expect((log.mock.calls[0][1] as Error).message).toBe('could not read budgets: read returned no data and no error')
     log.mockRestore()
+  })
+})
+
+// The element with `id`, and every element it sits in, outermost first. Walked as findProps walks:
+// only the page's own markup, so a component wrapping the card hides it, and the path comes back
+// null for a test to notice.
+function pathTo(node: unknown, id: string, outer: unknown[] = []): unknown[] | null {
+  if (node == null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = pathTo(child, id, outer)
+      if (found) return found
+    }
+    return null
+  }
+  const el = node as { props?: { id?: unknown; children?: unknown } }
+  const path = [...outer, el]
+  if (el.props?.id === id) return path
+  return el.props && 'children' in el.props ? pathTo(el.props.children, id, path) : null
+}
+
+// TransactionCard's "Manage in Settings" and LearnedMarker link to /settings#category-rules. Next's
+// router scrolls to the card as the page commits (#156). In a <Suspense>, the card would still be
+// behind that boundary's fallback when the page commits, and the router, finding no target, drops
+// the scroll, as it does with a loading.tsx beside this page (tests/unit/app-loading.test.tsx).
+describe('Settings: the Category rules card a link scrolls to (#156)', () => {
+  it('is in no <Suspense> boundary', async () => {
+    const path = pathTo(await SettingsPage(), 'category-rules')
+    expect(path).not.toBeNull()
+    expect(path!.filter((el) => (el as { type?: unknown }).type === Suspense)).toEqual([])
   })
 })
