@@ -268,7 +268,7 @@ export default async function DashboardPage({
       {homeStale && (
         <Link
           href="/settings"
-          className="block rounded-card border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber"
+          className="block min-h-[44px] rounded-card border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber md:min-h-0"
         >
           Your home value was last updated over a month ago — check Zillow and update it in Settings.
         </Link>
@@ -370,7 +370,7 @@ export default async function DashboardPage({
         <Link
           href="/reimbursements"
           aria-label={`Owed to you: ${money(owedToYou, currency)}`}
-          className="flex items-center justify-between rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-2"
+          className="flex min-h-[44px] items-center justify-between rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-2 md:min-h-0"
         >
           <span className="text-muted">Owed to you</span>
           <span className="font-medium tabular-nums text-ink">{money(owedToYou, currency)}</span>

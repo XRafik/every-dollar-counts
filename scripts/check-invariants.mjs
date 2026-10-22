@@ -449,71 +449,32 @@ export function checkBrandCasts(files) {
 // branch of a condition, not only from a breakpoint).
 //
 // It parses the TSX with the TypeScript compiler, because an attribute can hold `=>` and a pattern
-// that reads a tag to its first `>` stops inside the onClick. A control under an element whose own
+// that reads a tag to its first `>` stops inside the onClick. A file that does not parse fails:
+// the parser recovers and goes on, so the controls it finds in such a file cannot be trusted.
+// Components that hand their className straight to a raw control (PASS_THROUGH below) are checked
+// where they are rendered, by the classes written there. A control under an element whose own
 // classes hide it below `md` passes: `hidden`, with only an md: or wider variant to show it again.
-// §7 is a phone rule. Every other control without the rule is named below, by its file and its
-// classes, with why it is fine. The classes are the name so that changing them asks the question
-// again; and an entry that names nothing any more fails too, so the list cannot outlive its controls.
-// In a name, a template's expressions are written `${…}`, and classes that are one expression are
-// written as that expression in braces.
+// §7 is a phone rule.
 //
-// Heights were measured in a production build at 390px wide (#122).
+// A control that is tall enough from its padding and content still carries the rule itself, so a
+// change to its padding cannot take it under 44px unnoticed. Anything else that cannot carry it is
+// named below, by its file and its classes, with why it is fine. The classes are the name, so
+// changing them asks the question again. An entry that names no control in its file fails, and so,
+// when the whole tree is read (main(), below), does one whose file is gone: the list cannot outlive
+// its controls. In a name, a template's expressions are written `${…}`, and classes that are one
+// expression are written as that expression in braces.
 // ---------------------------------------------------------------------------
 export const TAP_TARGETS_ALLOWED = [
   {
-    file: 'app/(app)/dashboard/page.tsx',
-    classes: 'block rounded-card border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber',
-    reason: 'The stale home value banner, the width of the page: py-3 and a border around its text, 66px tall.',
-  },
-  {
-    file: 'app/(app)/dashboard/page.tsx',
-    classes: 'flex items-center justify-between rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-2',
-    reason: 'Owed to you, the width of the page: py-3 and a border around a 20px line, 46px tall.',
-  },
-  {
-    file: 'components/NotSyncingBanner.tsx',
-    classes: 'block rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral',
-    reason: "The \"isn't syncing\" banner, the width of the page: py-3 and a border around its text, 66px tall, 46 at one line.",
-  },
-  {
-    file: 'components/ui/StatRows.tsx',
-    classes: 'flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-2',
-    reason: "A row of the phone dashboard's figures, the width of the page: py-3 around a figure and its note, 62px tall.",
-  },
-  {
-    file: 'components/ui/StatCard.tsx',
-    classes: 'block',
-    reason: 'Wraps the whole tile, a Card with p-5 around a label and a figure: the net worth tile is 128px tall.',
-  },
-  {
-    file: 'components/BreakdownList.tsx',
-    classes: 'block transition-colors hover:bg-surface-2',
-    reason: 'Wraps a breakdown row, the width of the card: py-3 around a name and a sub line, 60px tall.',
-  },
-  {
-    file: 'components/TransactionCard.tsx',
-    classes:
-      'flex w-full items-start justify-between gap-3 border-b border-line px-4 py-3 text-left transition-colors last:border-b-0 active:bg-surface-2',
-    reason: "The phone's transaction row, the width of the list: py-3 around a name and a meta line, 67px tall.",
-  },
-  {
-    file: 'components/AppShell.tsx',
-    classes: 'flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${…}',
-    reason: "The phone's bottom tab bar: py-2 around a 20px icon and its label, 53px tall and 56px wide.",
-  },
-  {
     file: 'components/SignOutButton.tsx',
     classes: '{className}',
-    reason: "Its classes are its caller's. AppShell gives the phone header's buttonClass (#121); the sidebar's is desktop only.",
-  },
-  {
-    file: 'components/LearnedMarker.tsx',
-    classes:
-      'flex h-[34px] shrink-0 items-center rounded text-faint transition-colors hover:text-emerald focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald/40',
-    reason:
-      "Desktop only. TransactionRow is its one caller, in the transactions table, which is hidden below md. On a phone the sheet's Manage in Settings is the way there.",
+    reason: "Its classes are its caller's: each place it is rendered is checked, by the classes written there.",
   },
 ]
+
+// Components whose className goes straight to a raw control, by the module path they are imported
+// from and the name they are exported under.
+const PASS_THROUGH = [{ from: /(^|\/)SignOutButton$/, name: 'SignOutButton' }]
 
 // Values that carry the 44px rule below md: components/ui/styles.ts's classes, and buttonClass(…).
 const TAP_RULE_CLASSES = new Set(['tapTargetClass', 'inputClass', 'selectClass'])
@@ -564,19 +525,47 @@ function hiddenBelowMd(tokens) {
   })
 }
 
-export function checkTapTargets(files, allowed = TAP_TARGETS_ALLOWED) {
+// `wholeTree`: `files` is every file under app/ and components/, as main() reads them, so an entry
+// whose file is not among them names a file deleted or renamed. A caller passing some of the files
+// leaves it false, and such an entry is not reported.
+export function checkTapTargets(files, allowed = TAP_TARGETS_ALLOWED, { wholeTree = false } = {}) {
   const out = []
   const read = new Set()
+  const unparsed = new Set()
   const named = new Set()
   for (const { path, text } of files) {
     if (!/^(app|components)\/.+\.tsx$/.test(path)) continue
     read.add(path)
+    const [syntax] = ts.transpileModule(text, {
+      fileName: path,
+      reportDiagnostics: true,
+      compilerOptions: { jsx: ts.JsxEmit.Preserve },
+    }).diagnostics
+    if (syntax) {
+      unparsed.add(path)
+      out.push({
+        check: 'tap-target',
+        file: path,
+        line: lineOf(text, syntax.start ?? 0),
+        message:
+          `does not parse as TSX (${ts.flattenDiagnosticMessageText(syntax.messageText, ' ')}), so its ` +
+          'controls cannot be checked for a 44px tap target (#122).',
+      })
+      continue
+    }
     const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-    // <a> and <button>, and next/link's Link under whatever name this file imports it as.
+    // <a> and <button>; next/link's Link under whatever name this file imports it as; and each
+    // PASS_THROUGH component, under whatever name it is imported as.
     const controls = new Set(['a', 'button'])
     for (const s of sf.statements) {
-      if (ts.isImportDeclaration(s) && s.moduleSpecifier.text === 'next/link' && s.importClause?.name) {
-        controls.add(s.importClause.name.text)
+      if (!ts.isImportDeclaration(s) || !s.importClause) continue
+      const from = s.moduleSpecifier.text
+      if (from === 'next/link' && s.importClause.name) controls.add(s.importClause.name.text)
+      const bindings = s.importClause.namedBindings
+      if (!bindings || !ts.isNamedImports(bindings)) continue
+      for (const el of bindings.elements) {
+        const exported = (el.propertyName ?? el.name).text
+        if (PASS_THROUGH.some((p) => p.name === exported && p.from.test(from))) controls.add(el.name.text)
       }
     }
     const visit = (node, hidden) => {
@@ -607,7 +596,20 @@ export function checkTapTargets(files, allowed = TAP_TARGETS_ALLOWED) {
     visit(sf, false)
   }
   for (const entry of allowed) {
-    if (!read.has(entry.file) || named.has(entry)) continue
+    if (named.has(entry) || unparsed.has(entry.file)) continue
+    if (!read.has(entry.file)) {
+      if (!wholeTree) continue
+      out.push({
+        check: 'tap-target',
+        file: entry.file,
+        line: 1,
+        message:
+          'TAP_TARGETS_ALLOWED names this file, and there is no such file under app/ or components/. ' +
+          'Remove the entry, or, if the file moved, check its control is still 44px tall on a phone and ' +
+          'name it by its new path (#122).',
+      })
+      continue
+    }
     out.push({
       check: 'tap-target',
       file: entry.file,
@@ -653,7 +655,8 @@ function main() {
     ...checkUserCategoryWrites([...files, ...scripts]),
     ...checkSuggestionWrites([...files, ...scripts]),
     ...checkBrandCasts(files),
-    ...checkTapTargets(files),
+    // Every file under app/ and components/ is in `files`, so an entry for one that is not is stale.
+    ...checkTapTargets(files, TAP_TARGETS_ALLOWED, { wholeTree: true }),
   ]
   if (failures.length) {
     console.error(`\ncheck:invariants — ${failures.length} problem(s):\n`)

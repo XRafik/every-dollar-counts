@@ -66,6 +66,13 @@ describe('TransactionCard', () => {
     expect(screen.getByText(/2026-08-29 · Food/)).toBeTruthy()
   })
 
+  // The row is the phone's control for its transaction, a 44px tap target by its own classes (#122),
+  // not only by its two lines and padding, which a later change could shrink.
+  it('gives the row a 44px floor', () => {
+    renderCard()
+    expect(screen.getByRole('button', { name: /Joe S Den/ }).className.split(/\s+/)).toContain('min-h-[44px]')
+  })
+
   // Without this the mark is invisible until the row is opened, which makes "what have I already
   // marked?" answerable only by tapping every row in turn (spec §3.1).
   it('shows the share on the meta line once marked', () => {

@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/trends-page.test.tsx: the static page import below
 // is linked before this file's body runs, firing the mock factory.
-const { results, tz, presentation, paged, history, selects } = vi.hoisted(() => ({
+const { results, tz, presentation, paged, history, selects, receivable } = vi.hoisted(() => ({
   // Every `.select()` the page sends, per table, so a test can pin the suggestion embed (§7.4).
   selects: {} as Record<string, string[]>,
+  // What lib/receivable answers: what the household is owed, 0 unless a test says otherwise.
+  receivable: { value: 0 },
   // What lib/history-start answers. Mocked so these tests can tell a page that takes the history
   // start from historyStart apart from one that guesses it from its own transaction read: this
   // stub serves the whole fixture to every query, so the two would otherwise always agree.
@@ -114,7 +116,7 @@ vi.mock('@/lib/transaction-presentation', async (importOriginal) => {
     },
   }
 })
-vi.mock('@/lib/receivable', () => ({ fetchReceivable: async () => 0 }))
+vi.mock('@/lib/receivable', () => ({ fetchReceivable: async () => receivable.value }))
 vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value }))
 
 import { pagedTable } from '../stubs/postgrest-pages'
@@ -245,6 +247,7 @@ beforeEach(() => {
   results.plaid_items = { data: [], error: null }
   paged.transactions = null
   history.value = new Map()
+  receivable.value = 0
   for (const k of Object.keys(selects)) delete selects[k]
   vi.unstubAllEnvs()
 })
@@ -1174,4 +1177,25 @@ it("gives Recent activity's View all a 44px hit area on a phone", async () => {
   const viewAll = controlWithText(await render(), 'View all')
   expect(viewAll.props.href).toBe('/transactions')
   expectTapTarget(viewAll.props.className)
+})
+
+// The two full-width links were over 44px from their text and padding alone, so a padding change
+// could take them under it unnoticed. Each now has the 44px floor in its own classes below md
+// (#122), released from md up so the desktop is as it was.
+describe('Dashboard full-width links: a 44px floor below md (#122)', () => {
+  const floor = (className: unknown) =>
+    expect(String(className).split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
+
+  it('gives the stale home value banner one', async () => {
+    results.manual_assets = { data: [{ id: 'm1', name: 'Home', value: 500000, updated_at: '2026-07-01T00:00:00Z' }], error: null }
+    const tree = await render()
+    floor(controlWithText(tree, 'Your home value was last updated over a month ago — check Zillow and update it in Settings.').props.className)
+  })
+
+  it('gives Owed to you one', async () => {
+    receivable.value = 20
+    const owed = controlWithText(await render(), 'Owed to you$20.00')
+    expect(owed.props.href).toBe('/reimbursements')
+    floor(owed.props.className)
+  })
 })

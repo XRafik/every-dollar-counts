@@ -1,18 +1,29 @@
 // @vitest-environment node
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { TAP_TARGETS_ALLOWED } from '../../scripts/check-invariants.mjs'
 
 // The tripwire for #69, run against a scratch tree so each case is one file and nothing else.
 // The script scans app/, lib/ and components/ under its working directory.
 const SCRIPT = resolve('scripts/check-invariants.mjs')
+const REPO = fileURLToPath(new URL('../../', import.meta.url))
 let dir: string
 
-function check(source: string) {
+// The scratch tree holds the page under test, and a copy of each file tripwire 5's allowlist names
+// (#122): the script reads the whole tree, so an entry for a file not in it fails as stale.
+function check(source: string, { allowlisted = true } = {}) {
   dir = mkdtempSync(join(tmpdir(), 'invariants-'))
   for (const d of ['app/(app)/x', 'lib', 'components']) mkdirSync(join(dir, d), { recursive: true })
+  if (allowlisted) {
+    for (const { file } of TAP_TARGETS_ALLOWED) {
+      mkdirSync(dirname(join(dir, file)), { recursive: true })
+      copyFileSync(join(REPO, file), join(dir, file))
+    }
+  }
   writeFileSync(join(dir, 'app/(app)/x/page.tsx'), source)
   const run = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' })
   return { ok: run.status === 0, out: run.stdout + run.stderr }
@@ -185,6 +196,15 @@ describe('check-invariants: tap targets (#122)', () => {
     expect(bare.out).toContain('[tap-target]')
     rmSync(dir, { recursive: true, force: true })
     expect(check(page('`${tapTargetClass} text-emerald`')).ok).toBe(true)
+  })
+
+  // The script reads the whole tree, so an allowlist entry for a file that is not in it names a file
+  // deleted or renamed since, and fails rather than outliving its control.
+  it('fails when a file the allowlist names is not in the tree', () => {
+    const r = check(`export const ok = true\n`, { allowlisted: false })
+    expect(r.ok).toBe(false)
+    for (const { file } of TAP_TARGETS_ALLOWED) expect(r.out).toContain(`${file}:1`)
+    expect(r.out).toContain('no such file')
   })
 })
 

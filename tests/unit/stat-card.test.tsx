@@ -98,4 +98,11 @@ describe('StatCard', () => {
     render(<StatCard label="Cash" amount={10} href="/breakdown/cash" />)
     expect(screen.getByRole('link').getAttribute('href')).toBe('/breakdown/cash')
   })
+
+  // The link wraps the whole tile and was tall from the Card inside it alone. It carries a 44px floor
+  // below md itself (#122), released from md up so the desktop grid is as it was.
+  it('gives the link a 44px floor below md', () => {
+    render(<StatCard label="Cash" amount={10} href="/breakdown/cash" />)
+    expect(screen.getByRole('link').className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
+  })
 })

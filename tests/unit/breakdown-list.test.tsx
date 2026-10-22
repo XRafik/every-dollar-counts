@@ -58,4 +58,11 @@ describe('BreakdownList', () => {
     render(<BreakdownList rows={[]} />)
     expect(screen.getByText('Nothing to show here yet.')).toBeTruthy()
   })
+
+  // A row that drills in is a 44px tap target below md by its own classes (#122), not only by the
+  // row inside it, whose padding a later change could shrink. From md up the floor is released.
+  it('gives a row that is a link a 44px floor below md', () => {
+    render(<BreakdownList rows={[{ ...rows[0], href: '/transactions?account=a' }]} />)
+    expect(screen.getByRole('link').className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
+  })
 })

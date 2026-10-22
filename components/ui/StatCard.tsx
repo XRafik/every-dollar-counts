@@ -54,7 +54,7 @@ export function StatCard({
   )
   if (href) {
     return (
-      <Link href={href} className="block">
+      <Link href={href} className="block min-h-[44px] md:min-h-0">
         <Card className="p-5 transition-colors hover:bg-surface-2">{body}</Card>
       </Link>
     )

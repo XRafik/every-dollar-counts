@@ -266,6 +266,37 @@ describe('tap-target', () => {
     expect(tap('<Card className="p-5"><span className="text-xs">Learned</span></Card>')).toEqual([])
   })
 
+  // SignOutButton hands its className straight to its <button>, so each place it is rendered is a
+  // control, checked where its classes are written.
+  describe('SignOutButton call sites', () => {
+    const IMPORT = `import { SignOutButton } from '@/components/SignOutButton'\n`
+
+    it('fires on one whose classes carry no 44px rule', () => {
+      expect(checks(tap(`${IMPORT}const out = <SignOutButton className="text-sm text-coral" />`))).toEqual(['tap-target'])
+    })
+
+    it('passes one with buttonClass', () => {
+      expect(tap(`${IMPORT}const out = <SignOutButton showLabel={false} className={buttonClass('ghost', 'sm', 'min-w-[44px]')} />`)).toEqual([])
+    })
+
+    it('passes one under an element hidden below md', () => {
+      expect(tap(`${IMPORT}<aside className="fixed hidden w-64 md:flex"><div><SignOutButton className="mt-1 flex w-full px-3 py-2 text-sm" /></div></aside>`)).toEqual([])
+    })
+
+    it('follows it under another name, from a relative path', () => {
+      expect(checks(tap(`import { SignOutButton as Out } from './SignOutButton'\nconst out = <Out className="text-sm" />`))).toEqual(['tap-target'])
+    })
+
+    it('leaves alone a component of that name from another module', () => {
+      expect(tap(`import { SignOutButton } from 'some-kit'\nconst out = <SignOutButton className="text-sm" />`)).toEqual([])
+    })
+
+    it('reads past imports with no names, or a namespace', () => {
+      const src = `import './globals.css'\nimport * as React from 'react'\n${IMPORT}const out = <SignOutButton className="text-sm" />`
+      expect(checks(tap(src))).toEqual(['tap-target'])
+    })
+  })
+
   it.each([
     ['tapTargetClass, in a template', '<a href="/x" className={`${tapTargetClass} text-sm`}>x</a>'],
     ['tapTargetClass, alone', '<a href="/x" className={tapTargetClass}>x</a>'],
@@ -341,6 +372,30 @@ describe('tap-target', () => {
     expect(checkTapTargets(file('lib/x.tsx', '<a href="/x">x</a>'), [])).toEqual([])
     expect(checkTapTargets(file('components/x.ts', 'export const a = 1'), [])).toEqual([])
     expect(checks(checkTapTargets(file('app/(app)/x/page.tsx', '<a href="/x">x</a>'), []))).toEqual(['tap-target'])
+  })
+
+  // The compiler's parser recovers from a syntax error and goes on, so the controls of a file that
+  // does not parse cannot be trusted to be found. The file fails, on the line of the first error.
+  it('fails a file whose TSX does not parse, naming it', () => {
+    const found = checkTapTargets(file(C, 'export function X() {\n  return <a href="/x">x</a\n}\n'), [])
+    expect(found.map((f) => [f.check, f.file, f.line])).toEqual([['tap-target', C, 3]])
+    expect(found[0].message).toMatch(/^does not parse as TSX/)
+  })
+
+  it('does not call an entry stale because its file did not parse', () => {
+    const allowed = [{ file: C, classes: 'block', reason: 'tall' }]
+    expect(checks(checkTapTargets(file(C, '<a href="/x" className="block">x</a'), allowed))).toEqual(['tap-target'])
+  })
+
+  // Given every file in the tree, as main() is, an entry for a file that is not among them names a
+  // file deleted or renamed, and fails. Given some of the files, as the tests above are, it does not.
+  it('reports an entry whose file is gone, when told it was given the whole tree', () => {
+    const allowed = [{ file: 'components/Gone.tsx', classes: 'block', reason: 'tall' }]
+    const src = '<a href="/x" className={tapTargetClass}>x</a>'
+    expect(checkTapTargets(file(C, src), allowed)).toEqual([])
+    const found = checkTapTargets(file(C, src), allowed, { wholeTree: true })
+    expect(found.map((f) => [f.check, f.file])).toEqual([['tap-target', 'components/Gone.tsx']])
+    expect(found[0].message).toContain('no such file')
   })
 
   it('gives every entry on the real allowlist a reason', () => {
