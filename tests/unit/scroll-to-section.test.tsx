@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { useLayoutEffect, type ReactNode } from 'react'
-import { render, cleanup } from '@testing-library/react'
+import { render, screen, cleanup } from '@testing-library/react'
 import { ScrollToSection } from '@/components/ScrollToSection'
 import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 
@@ -11,6 +11,7 @@ const ownScrollY = Object.getOwnPropertyDescriptor(window, 'scrollY')
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   window.history.replaceState(null, '', '/')
   if (ownScrollY) Object.defineProperty(window, 'scrollY', ownScrollY)
   else delete (window as { scrollY?: number }).scrollY
@@ -23,13 +24,13 @@ function spyOnScroll() {
   return scrolled
 }
 
-// Settings as the component meets it, at `address`: the card (unless `card` is false) and the
-// component.
-function settingsAt(address: string, { card = true } = {}) {
+// Settings as the component meets it, at `address`: the card (unless `card` is false), headed as on
+// the page, and the component.
+function settingsAt(address: string, { card = true, heading = true } = {}) {
   window.history.replaceState(null, '', address)
   const page = () => (
     <div>
-      {card && <div id="category-rules">Category rules</div>}
+      {card && <div id="category-rules">{heading ? <h2 tabIndex={-1}>Category rules</h2> : 'Category rules'}</div>}
       <ScrollToSection id="category-rules" />
     </div>
   )
@@ -101,6 +102,33 @@ describe('ScrollToSection', () => {
     const scrolled = spyOnScroll()
     settingsAt(address)
     expect(scrolled).not.toHaveBeenCalled()
+  })
+
+  // A screen reader follows the scroll: focus moves to the card's heading, after the scroll and
+  // without a second one, so VoiceOver reads on from "Category rules" rather than from the top.
+  it("moves focus to the card's heading once it has scrolled there, without scrolling again", () => {
+    const scrolled = spyOnScroll()
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    settingsAt(CATEGORY_RULES_HREF)
+    const heading = screen.getByRole('heading', { name: 'Category rules' })
+    expect(document.activeElement).toBe(heading)
+    expect(focused).toHaveBeenCalledTimes(1)
+    expect(focused.mock.contexts[0]).toBe(heading)
+    expect(focused).toHaveBeenCalledWith({ preventScroll: true })
+    expect(scrolled.mock.invocationCallOrder[0]).toBeLessThan(focused.mock.invocationCallOrder[0])
+  })
+
+  it('moves no focus when it does not scroll', () => {
+    spyOnScroll()
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    settingsAt('/settings')
+    expect(focused).not.toHaveBeenCalled()
+  })
+
+  it('still scrolls, and throws nothing, when the card has no heading', () => {
+    const scrolled = spyOnScroll()
+    expect(() => settingsAt(CATEGORY_RULES_HREF, { heading: false })).not.toThrow()
+    expect(scrolled).toHaveBeenCalledTimes(1)
   })
 
   it('does nothing, and throws nothing, when the page has no such card', () => {

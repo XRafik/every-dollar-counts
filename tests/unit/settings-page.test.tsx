@@ -598,6 +598,14 @@ describe('Settings: opened on the Category rules card by a link (#156)', () => {
     expect(findProps(card(tree, 'Categories'), 'a')).toMatchObject({ href: '/settings' })
   })
 
+  // ScrollToSection moves focus to the card's heading, for a screen reader to read on from there. It
+  // takes focus only by script (tabIndex -1, so the Tab key passes it by) and shows no ring.
+  it("lets the card's heading take focus by script, with no ring", async () => {
+    const heading = findProps(card(await SettingsPage(), 'Category rules'), 'h2') as { tabIndex?: number; className: string }
+    expect(heading.tabIndex).toBe(-1)
+    expect(heading.className.split(/\s+/)).toContain('outline-none')
+  })
+
   // A phone's sticky top bar is 56px (AppShell's h-14). scroll-mt-20 stops the scroll 80px short, so
   // the card's heading lands below the bar rather than under it.
   it("keeps the card's heading clear of the phone's sticky top bar", async () => {
