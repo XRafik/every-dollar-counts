@@ -69,7 +69,7 @@ export default async function TrendsPage() {
       />
 
       <Card className="p-5">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-3">
           <h2 className="text-base font-semibold text-ink">Where the money went</h2>
           <span className="text-xs text-faint">{view.spend.label}</span>
         </div>
@@ -83,7 +83,7 @@ export default async function TrendsPage() {
       </Card>
 
       <Card className="p-5">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-3">
           <h2 className="text-base font-semibold text-ink">Compared with the month before</h2>
           <span className="text-xs text-faint">{view.compare.label}</span>
         </div>

@@ -30,7 +30,7 @@ export function StatRows({ rows }: { rows: StatRow[] }) {
         <Link
           key={href}
           href={href}
-          className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+          className="flex min-h-[44px] items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-surface-2 md:min-h-0"
         >
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-wide text-faint">{label}</div>

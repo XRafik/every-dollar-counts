@@ -4,6 +4,7 @@ import PlaidOAuthPage from '@/app/plaid/oauth/page'
 import { savePendingLink } from '@/components/plaid-link-context'
 import { answering, badGateway, offline, redirectedToLogin, refused, replyWith, unanswered } from './helpers/save-replies'
 import { useMemoryStorage } from './helpers/memory-storage'
+import { expectTapTarget } from './helpers/tap-target'
 
 // /plaid/oauth, where an OAuth bank (Wells Fargo, Chase…) returns the person (#165). Link resumes
 // here and fires onSuccess, and the page finishes the link. Plaid Link cannot run here, so
@@ -98,6 +99,14 @@ describe('Plaid OAuth return page', () => {
     expect(screen.getByText(CHECK_SETTINGS)).toBeTruthy()
     expect(screen.queryByText(/couldn.t finish/i)).toBeNull()
     expect(router.replace).not.toHaveBeenCalled()
+  })
+
+  // #122's sweep: the page's only control, met on a phone back from the bank's own site, and a
+  // 20px-tall text link there.
+  it('gives Go to Settings a 44px hit area', async () => {
+    vi.stubGlobal('fetch', answering(() => refused(502, "Couldn't finish connecting that bank.")))
+    await back()
+    expectTapTarget(screen.getByRole('link', { name: 'Go to Settings' }).className)
   })
 })
 

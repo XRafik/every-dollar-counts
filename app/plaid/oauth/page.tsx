@@ -9,6 +9,7 @@ import {
   clearPendingLink,
   completePendingLink,
 } from '@/components/plaid-link-context'
+import { tapTargetClass } from '@/components/ui/styles'
 
 // True only after the client has mounted. useSyncExternalStore is the SSR-safe way to read this
 // without a setState-in-effect (which React 19's lint rule forbids). It lets the server and first
@@ -129,7 +130,7 @@ export default function PlaidOAuthPage() {
           <p className="text-sm text-muted">{WORDS[mode].check}</p>
           <Link
             href="/settings"
-            className="inline-block text-sm font-medium text-emerald hover:text-emerald-600"
+            className={`${tapTargetClass} text-sm font-medium text-emerald hover:text-emerald-600`}
           >
             Go to Settings
           </Link>

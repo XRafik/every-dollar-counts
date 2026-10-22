@@ -8,6 +8,7 @@ import { BudgetEditor } from '@/components/BudgetEditor'
 import { NotSyncingBanner } from '@/components/NotSyncingBanner'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { buttonClass } from '@/components/ui/Button'
+import { tapTargetClass } from '@/components/ui/styles'
 import { todayIn } from '@/lib/clock'
 import { currentHouseholdId, householdTimezone } from '@/lib/household'
 import { listItemsForHousehold } from '@/lib/plaid-items'
@@ -89,7 +90,7 @@ export default async function BudgetsPage() {
       />
       <p className="text-sm text-muted">
         To rename a category or add your own, use{' '}
-        <Link href="/settings" className="text-emerald hover:text-emerald-600">
+        <Link href="/settings" className={`${tapTargetClass} text-emerald hover:text-emerald-600`}>
           Settings → Categories
         </Link>
         .

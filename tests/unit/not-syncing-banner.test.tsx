@@ -64,10 +64,12 @@ describe('NotSyncingBanner', () => {
   })
 
   // The dashboard's look, exactly, so its phone layout, already checked there, carries to every page.
-  it('keeps the look the dashboard banner had', () => {
+  // With a 44px floor below md in its own classes (#122): its text and padding made it 46px or more,
+  // which a padding change could undo unnoticed. Released from md up, where it is as it was.
+  it('keeps the look the dashboard banner had, with a 44px floor below md', () => {
     render(<NotSyncingBanner items={[bank('Capital One', 'needs_reconnect')]} />)
     expect(screen.getByRole('link').className).toBe(
-      'block rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral'
+      'block min-h-[44px] rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral md:min-h-0'
     )
   })
 })

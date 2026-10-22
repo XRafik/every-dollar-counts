@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { PeriodOverPeriodChart } from '@/components/PeriodOverPeriodChart'
 import { CHART_SERIES } from '@/lib/chart-palette'
+import { expectTapTarget } from './helpers/tap-target'
 
 // Auto-cleanup only registers when vitest runs with globals; this suite does not.
 afterEach(cleanup)
@@ -226,6 +228,12 @@ describe('PeriodOverPeriodChart', () => {
     expect(control.className.split(/\s+/)).toContain('md:hidden')
   })
 
+  // #122: phone-only, like the cap, and 20px tall where §7 asks for 44px.
+  it('gives the control a 44px hit area', () => {
+    render(<PeriodOverPeriodChart data={many} currentLabel="Sep" previousLabel="Aug" />)
+    expectTapTarget(screen.getByRole('button', { name: 'Show all 13 categories' }).className)
+  })
+
   it('expands to every category when the control is used', () => {
     render(<PeriodOverPeriodChart data={many} currentLabel="Sep" previousLabel="Aug" />)
     fireEvent.click(screen.getByRole('button', { name: 'Show all 13 categories' }))
@@ -246,5 +254,65 @@ describe('PeriodOverPeriodChart', () => {
   it('offers no control when nothing is hidden', () => {
     render(<PeriodOverPeriodChart data={many.slice(0, 6)} currentLabel="Sep" previousLabel="Aug" />)
     expect(screen.queryByRole('button', { name: /Show all/ })).toBeNull()
+  })
+})
+
+// #116. CSS shows one of the two charts and hides the other with display:none. recharts measured
+// the hidden one at 0x0 and logged "The width(0) and height(0) of chart should be greater than 0",
+// twice a load in production, where recharts still warns. Here, as in a browser, everything in the
+// box CSS hides measures 0x0 and the observer reports nothing for it; the shown box has a size.
+describe('PeriodOverPeriodChart: the hidden instance (#116)', () => {
+  let shared: { observer: typeof ResizeObserver; rect: typeof HTMLElement.prototype.getBoundingClientRect }
+
+  // Sizes as a browser would give them at a width where `hiddenBox` is display:none.
+  function at(hiddenBox: string) {
+    const sizeOf = (el: Element) => (el.closest(hiddenBox) ? { width: 0, height: 0 } : { width: 360, height: 300 })
+    globalThis.ResizeObserver = class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(el: Element) {
+        const size = sizeOf(el)
+        if (size.width > 0 && size.height > 0) {
+          this.cb([{ target: el, contentRect: size } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver)
+        }
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const { width, height } = sizeOf(this)
+      return { width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0 } as DOMRect
+    }
+  }
+
+  beforeEach(() => {
+    shared = { observer: globalThis.ResizeObserver, rect: HTMLElement.prototype.getBoundingClientRect }
+  })
+
+  afterEach(() => {
+    globalThis.ResizeObserver = shared.observer
+    HTMLElement.prototype.getBoundingClientRect = shared.rect
+    vi.restoreAllMocks()
+  })
+
+  it.each([
+    ['a phone', '[class="hidden md:block"]', 'md:hidden'],
+    ['a desktop', '[class="md:hidden"]', 'hidden md:block'],
+  ])('on %s, draws only the chart shown there, and recharts never warns', (_, hiddenBox, shownBox) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    at(hiddenBox)
+    const { container } = render(<PeriodOverPeriodChart data={data} currentLabel="Aug 2026" previousLabel="Jul 2026" />)
+    expect(warn).not.toHaveBeenCalled()
+    const charts = container.querySelectorAll('.recharts-responsive-container')
+    expect(charts).toHaveLength(1)
+    expect(charts[0].closest(`[class="${shownBox}"]`)).not.toBeNull()
+    expect(screen.getAllByText('Aug 2026')).toHaveLength(1)
+  })
+
+  // Both boxes still go out from the server, at the heights they had, so the page does not move
+  // when the shown chart arrives, and CSS still picks between them on either device.
+  it('sends both boxes from the server, at their heights, with no chart in either', () => {
+    expect(renderToStaticMarkup(<PeriodOverPeriodChart data={data} currentLabel="Sep" previousLabel="Aug" />)).toBe(
+      '<div class="md:hidden" style="width:100%;height:200px"></div><div class="hidden md:block" style="width:100%;height:340px"></div>'
+    )
   })
 })

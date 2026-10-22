@@ -43,7 +43,7 @@ export function BreakdownList({
         return (
           <li key={r.key}>
             {r.href ? (
-              <Link href={r.href} className="block transition-colors hover:bg-surface-2">
+              <Link href={r.href} className="block min-h-[44px] transition-colors hover:bg-surface-2 md:min-h-0">
                 {inner}
               </Link>
             ) : (

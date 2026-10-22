@@ -29,6 +29,16 @@ describe('StatRows', () => {
     expect(links).toEqual(['/breakdown/cash', '/breakdown/spent', '/breakdown/saved'])
   })
 
+  // The rows are a phone's, and each is a 44px tap target by its own classes (#122), not only by
+  // its padding and figure, which a later change could shrink. The floor is released at md, as every
+  // floor in the app is: the dashboard shows these only below md, so nothing there changes.
+  it('gives each row a 44px floor below md', () => {
+    render(<StatRows rows={rows} />)
+    for (const link of screen.getAllByRole('link')) {
+      expect(link.className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
+    }
+  })
+
   // A figure must never break after its minus sign.
   it('keeps each figure on one line', () => {
     render(<StatRows rows={rows} />)

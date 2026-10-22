@@ -2,6 +2,7 @@
 
 import { useState, type ComponentProps } from 'react'
 import { AccountCard } from './AccountCard'
+import { tapTargetClass } from './ui/styles'
 
 // How many accounts are worth the thumb below `md`. Accounts are reference material rather than
 // the reason the page was opened (§4), and the household has twelve.
@@ -20,35 +21,40 @@ export function AccountList({ accounts }: { accounts: Account[] }) {
   const canCollapse = hidden.length > 0
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {accounts.slice(0, COLLAPSED).map((a) => (
-          <AccountCard key={a.id} account={a} />
-        ))}
-        {hidden.map((a) => (
-          // Present in the document at every width. The wrapper is new markup, but `md:contents`
-          // removes it from the box tree at `md` and up, leaving each card a direct grid child —
-          // so the desktop grid renders exactly as it did. `hidden` below `md` keeps the extras
-          // out of the phone list AND out of the accessibility tree until the reader asks.
-          <div
-            key={a.id}
-            data-account-extra
-            className={expanded ? 'contents' : 'hidden md:contents'}
-          >
-            <AccountCard account={a} />
-          </div>
-        ))}
-      </div>
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+      {accounts.slice(0, COLLAPSED).map((a) => (
+        <AccountCard key={a.id} account={a} />
+      ))}
+      {/* Between the cards it follows and the cards it reveals (#107). After the grid, the cards it
+          revealed came before it in the document, so a screen reader reading on from it moved past
+          them. Here they follow it, and it holds its place under the thumb that tapped it. In the
+          grid it is a grid item: `md:hidden` takes it out of the grid from `md` up, so the desktop
+          grid is as it was. Below `md` the grid is one column (#123), so `col-span-full` changes
+          nothing today: it is a guard, keeping the control on a row of its own if the phone's grid
+          ever gets a second column. `justify-self-start` keeps it its own width. */}
       {canCollapse && (
         <button
           type="button"
           aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
-          className="text-sm font-medium text-emerald hover:text-emerald-600 md:hidden"
+          className={`${tapTargetClass} col-span-full justify-self-start text-sm font-medium text-emerald hover:text-emerald-600 md:hidden`}
         >
           {expanded ? 'Show fewer' : `Show all ${accounts.length}`}
         </button>
       )}
+      {hidden.map((a) => (
+        // Present in the document at every width. The wrapper is new markup, but `md:contents`
+        // removes it from the box tree at `md` and up, leaving each card a direct grid child —
+        // so the desktop grid renders exactly as it did. `hidden` below `md` keeps the extras
+        // out of the phone list AND out of the accessibility tree until the reader asks.
+        <div
+          key={a.id}
+          data-account-extra
+          className={expanded ? 'contents' : 'hidden md:contents'}
+        >
+          <AccountCard account={a} />
+        </div>
+      ))}
     </div>
   )
 }

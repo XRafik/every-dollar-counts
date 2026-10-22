@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/Card'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { SearchIcon } from '@/components/ui/icons'
-import { inputClass } from '@/components/ui/styles'
+import { inputClass, tapTargetClass } from '@/components/ui/styles'
 import { fetchCategoryContext, SUGGESTION_EMBED, withSuggestion } from '@/lib/category-context'
 import { resolveCategory } from '@/lib/category-rules'
 import { filterByCategory, filterByFlow } from '@/lib/category-views'
@@ -159,7 +159,7 @@ export default async function TransactionsPage({
             {category && <input type="hidden" name="category" value={category} />}
             {month && <input type="hidden" name="month" value={month} />}
             {flow && <input type="hidden" name="flow" value={flow} />}
-            <div className="w-full sm:w-64">
+            <div className="w-full md:w-64">
               <input
                 name="q"
                 defaultValue={q ?? ''}
@@ -186,7 +186,7 @@ export default async function TransactionsPage({
                   ? `Money in${month ? ` · ${month}` : ''}`
                   : `Money out${month ? ` · ${month}` : ''}`}
           </span>
-          <a href="/transactions" className="text-muted hover:text-ink">
+          <a href="/transactions" className={`${tapTargetClass} text-muted hover:text-ink`}>
             Clear
           </a>
         </div>
@@ -208,7 +208,7 @@ export default async function TransactionsPage({
                 ? (
                     <>
                       No transactions yet.{' '}
-                      <Link href="/dashboard" className="text-emerald hover:text-emerald-600">
+                      <Link href="/dashboard" className={`${tapTargetClass} text-emerald hover:text-emerald-600`}>
                         Connect a bank
                       </Link>
                       .
@@ -285,7 +285,7 @@ export default async function TransactionsPage({
       {(hasPrev || hasNext) && (
         <div className="flex items-center justify-between">
           {hasPrev ? (
-            <a href={pageHref(page - 1)} className="text-sm font-medium text-emerald hover:text-emerald-600">
+            <a href={pageHref(page - 1)} className={`${tapTargetClass} text-sm font-medium text-emerald hover:text-emerald-600`}>
               ← Newer
             </a>
           ) : (
@@ -293,7 +293,7 @@ export default async function TransactionsPage({
           )}
           <span className="text-xs text-faint">Page {page}</span>
           {hasNext ? (
-            <a href={pageHref(page + 1)} className="text-sm font-medium text-emerald hover:text-emerald-600">
+            <a href={pageHref(page + 1)} className={`${tapTargetClass} text-sm font-medium text-emerald hover:text-emerald-600`}>
               Older →
             </a>
           ) : (

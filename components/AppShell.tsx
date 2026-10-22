@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import type { ComponentType } from 'react'
 import { SignOutButton } from '@/components/SignOutButton'
+import { buttonClass } from '@/components/ui/Button'
 import {
   HomeIcon,
   TransactionsIcon,
@@ -119,10 +120,11 @@ export function AppShell({
           <BrandMark className="h-8 w-8 text-base" />
           <span className="text-sm font-semibold text-ink">Every Dollar Counts</span>
         </div>
-        <SignOutButton
-          showLabel={false}
-          className="grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink disabled:opacity-50"
-        />
+        {/* The top bar's only control. It was `h-9 w-9`, a 36x36 tap target, and stage 5 missed it
+            when it raised the shared classes to §7's 44px because it never used them (#121). Now it
+            takes the rule from buttonClass rather than restating it; `min-w-[44px]` makes the
+            icon-only box square. This bar is `md:hidden`, so desktop never sees it. */}
+        <SignOutButton showLabel={false} className={buttonClass('ghost', 'sm', 'min-w-[44px]')} />
       </header>
 
       {/* Main content */}
@@ -139,7 +141,7 @@ export function AppShell({
             <Link
               key={href}
               href={href}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${
+              className={`flex min-h-[44px] min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors md:min-h-0 ${
                 active ? 'text-emerald' : 'text-faint hover:text-ink'
               }`}
             >

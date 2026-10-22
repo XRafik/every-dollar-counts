@@ -9,6 +9,7 @@ import { SpendIncomeChart } from '@/components/SpendIncomeChart'
 import { RecentActivity } from '@/components/RecentActivity'
 import { Card } from '@/components/ui/Card'
 import { buttonClass } from '@/components/ui/Button'
+import { tapTargetClass } from '@/components/ui/styles'
 import { StatCard } from '@/components/ui/StatCard'
 import { StatRows } from '@/components/ui/StatRows'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -267,7 +268,7 @@ export default async function DashboardPage({
       {homeStale && (
         <Link
           href="/settings"
-          className="block rounded-card border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber"
+          className="block min-h-[44px] rounded-card border border-amber/40 bg-amber/10 px-4 py-3 text-sm text-amber md:min-h-0"
         >
           Your home value was last updated over a month ago — check Zillow and update it in Settings.
         </Link>
@@ -369,7 +370,7 @@ export default async function DashboardPage({
         <Link
           href="/reimbursements"
           aria-label={`Owed to you: ${money(owedToYou, currency)}`}
-          className="flex items-center justify-between rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-2"
+          className="flex min-h-[44px] items-center justify-between rounded-lg border border-line px-4 py-3 text-sm hover:bg-surface-2 md:min-h-0"
         >
           <span className="text-muted">Owed to you</span>
           <span className="font-medium tabular-nums text-ink">{money(owedToYou, currency)}</span>
@@ -395,7 +396,7 @@ export default async function DashboardPage({
             <h2 className="text-base font-semibold text-ink">Recent activity</h2>
             <Link
               href="/transactions"
-              className="text-xs font-medium text-emerald hover:text-emerald-600"
+              className={`${tapTargetClass} text-xs font-medium text-emerald hover:text-emerald-600`}
             >
               View all
             </Link>

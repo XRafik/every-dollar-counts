@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // vi.hoisted for the same reason as tests/unit/trends-page.test.tsx: the static page import below
 // is linked before this file's body runs, firing the mock factory.
-const { results, tz, presentation, paged, history, selects } = vi.hoisted(() => ({
+const { results, tz, presentation, paged, history, selects, receivable } = vi.hoisted(() => ({
   // Every `.select()` the page sends, per table, so a test can pin the suggestion embed (§7.4).
   selects: {} as Record<string, string[]>,
+  // What lib/receivable answers: what the household is owed, 0 unless a test says otherwise.
+  receivable: { value: 0 },
   // What lib/history-start answers. Mocked so these tests can tell a page that takes the history
   // start from historyStart apart from one that guesses it from its own transaction read: this
   // stub serves the whole fixture to every query, so the two would otherwise always agree.
@@ -114,12 +116,13 @@ vi.mock('@/lib/transaction-presentation', async (importOriginal) => {
     },
   }
 })
-vi.mock('@/lib/receivable', () => ({ fetchReceivable: async () => 0 }))
+vi.mock('@/lib/receivable', () => ({ fetchReceivable: async () => receivable.value }))
 vi.mock('@/lib/history-start', () => ({ historyStart: async () => history.value }))
 
 import { pagedTable } from '../stubs/postgrest-pages'
 import { storedItem, FOREIGN_ITEMS } from '../stubs/plaid-items'
 import { blocks, bannerText, balancesNote } from './helpers/banner'
+import { controlWithText, expectTapTarget } from './helpers/tap-target'
 import DashboardPage from '@/app/(app)/dashboard/page'
 import BreakdownPage from '@/app/(app)/breakdown/[metric]/page'
 import { BreakdownList } from '@/components/BreakdownList'
@@ -130,6 +133,8 @@ import { RefreshButton } from '@/components/RefreshButton'
 import { LinkButton } from '@/components/LinkButton'
 import { Card } from '@/components/ui/Card'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
+import type { ReactNode } from 'react'
 import { moneyWhole } from '@/lib/format'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
@@ -171,22 +176,31 @@ type StatCardProps = {
   foot?: unknown
 }
 
-function findStatCards(node: unknown): { props: StatCardProps }[] {
-  const found: { props: StatCardProps }[] = []
-  const walk = (n: unknown) => {
-    if (n == null || typeof n !== 'object') return
-    if (Array.isArray(n)) {
-      n.forEach(walk)
-      return
-    }
-    const el = n as { type?: unknown; props?: { children?: unknown } }
-    if (typeof el.type === 'function' && (el.type as { name?: string }).name === 'StatCard') {
-      found.push(el as unknown as { props: StatCardProps })
-    }
-    if (el.props?.children) walk(el.props.children)
+// Every element in the returned tree, reached through any prop, not only `children`: an element
+// handed to another as a prop renders all the same. Plain objects and arrays in props are walked
+// too, as StatRows' rows carry elements in their `foot`.
+type TreeElement = { type?: unknown; props: Record<string, unknown> }
+function elementsOf(node: unknown): TreeElement[] {
+  const found: TreeElement[] = []
+  const seen = new WeakSet<object>()
+  const walk = (n: unknown): void => {
+    if (n == null || typeof n !== 'object' || seen.has(n)) return
+    seen.add(n)
+    if (Array.isArray(n)) return n.forEach(walk)
+    const el = n as { $$typeof?: unknown; props?: Record<string, unknown> }
+    if (el.$$typeof === undefined) return Object.values(n).forEach(walk)
+    if (!el.props) return
+    found.push(el as TreeElement)
+    Object.values(el.props).forEach(walk)
   }
   walk(node)
   return found
+}
+
+function findStatCards(node: unknown): { props: StatCardProps }[] {
+  return elementsOf(node).filter(
+    (el) => typeof el.type === 'function' && (el.type as { name?: string }).name === 'StatCard'
+  ) as unknown as { props: StatCardProps }[]
 }
 
 // The items the page hands to <RecentActivity>. The list itself is not rendered here — this reads
@@ -244,6 +258,7 @@ beforeEach(() => {
   results.plaid_items = { data: [], error: null }
   paged.transactions = null
   history.value = new Map()
+  receivable.value = 0
   for (const k of Object.keys(selects)) delete selects[k]
   vi.unstubAllEnvs()
 })
@@ -725,6 +740,35 @@ describe('Dashboard average savings (#126)', () => {
     expect(classes).toContain('md:hidden')
   })
 
+  // #137: a compact tile has no phone presentation any more, which holds only while the hero is the
+  // one StatCard outside the wrapper hidden below md. Asserted on what is outside the wrapper, not on
+  // the tiles marked compact: compact is StatCard's default, so a tile that leaves `variant` out is
+  // compact too, and so is a hero that loses its `variant="hero"`.
+  it('keeps every StatCard but the hero under the wrapper hidden below md', async () => {
+    const tree = await render()
+    const wrappers = elementsOf(tree).filter((el) => el.props.className === 'hidden md:contents')
+    expect(wrappers).toHaveLength(1)
+    const inWrapper = findStatCards(wrappers[0])
+    const outside = findStatCards(tree).filter((c) => !inWrapper.includes(c))
+    expect(outside.map((c) => c.props.variant)).toEqual(['hero'])
+  })
+
+  // The test above walks every prop, so a tile handed to an element as a prop, which renders all the
+  // same, is counted where it sits rather than slipping past.
+  it('finds a tile handed to another element as a prop', () => {
+    function Slot({ tile }: { tile: ReactNode }) {
+      return <section>{tile}</section>
+    }
+    const tile = <StatCard label="Cash on hand" amount={1} />
+    const found = findStatCards(
+      <div>
+        <Slot tile={tile} />
+      </div>
+    )
+    expect(found).toHaveLength(1)
+    expect(found[0]).toBe(tile)
+  })
+
   // The read is seven months; the chart under "Last 6 months" must still get six.
   it('still charts six months', async () => {
     results.categories = income
@@ -1145,5 +1189,34 @@ describe('Dashboard clock', () => {
     const text = textOf(await render())
     expect(text).toContain('Good evening')
     expect(text).not.toContain('Good morning')
+  })
+})
+
+// #122's comment: Recent activity's "View all" is a text-xs link, shown at every width, and was
+// under §7's 44px on a phone. Its row grows to 44px there; from `md` up it is as it was.
+it("gives Recent activity's View all a 44px hit area on a phone", async () => {
+  const viewAll = controlWithText(await render(), 'View all')
+  expect(viewAll.props.href).toBe('/transactions')
+  expectTapTarget(viewAll.props.className)
+})
+
+// The two full-width links were over 44px from their text and padding alone, so a padding change
+// could take them under it unnoticed. Each now has the 44px floor in its own classes below md
+// (#122), released from md up so the desktop is as it was.
+describe('Dashboard full-width links: a 44px floor below md (#122)', () => {
+  const floor = (className: unknown) =>
+    expect(String(className).split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
+
+  it('gives the stale home value banner one', async () => {
+    results.manual_assets = { data: [{ id: 'm1', name: 'Home', value: 500000, updated_at: '2026-07-01T00:00:00Z' }], error: null }
+    const tree = await render()
+    floor(controlWithText(tree, 'Your home value was last updated over a month ago — check Zillow and update it in Settings.').props.className)
+  })
+
+  it('gives Owed to you one', async () => {
+    receivable.value = 20
+    const owed = controlWithText(await render(), 'Owed to you$20.00')
+    expect(owed.props.href).toBe('/reimbursements')
+    floor(owed.props.className)
   })
 })

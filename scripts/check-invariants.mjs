@@ -10,8 +10,9 @@
 // is the outstanding debt, written down. Adding to it should feel like a decision; removing from it
 // is how the debt gets paid.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, posix, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import ts from 'typescript'
 
 // ---------------------------------------------------------------------------
 // 1. Every read on a page, and in the lib/ helpers pages call, checks `error`.
@@ -437,6 +438,516 @@ export function checkBrandCasts(files) {
 }
 
 // ---------------------------------------------------------------------------
+// 5. A control shown on a phone is a 44px tap target.
+//
+// #122. Spec §7 asks for a 44px minimum tap height on a phone. Stage 5 of the phone pass met it by
+// raising the shared control classes, which reach only the controls that use them. #122 named eight
+// text links and text buttons with classes of their own, 16-20px tall on a phone, two of them added
+// by the pass itself, for phones; the sweep that followed found 19. The phone header's sign-out, at
+// 36px, was #121. So every raw <a>, <button> and next/link <Link> in app/ and components/ carries the
+// 44px rule in classes it has in every state, written outside any condition and under no variant:
+// - one of the shared classes (SHARED_CLASSES, below): tapTargetClass, inputClass or selectClass,
+//   imported from components/ui/styles, or buttonClass(…), imported from components/ui/Button; or
+// - min-h-[44px] itself, beside md:min-h-0 so that the desktop layout is untouched, on a <button>,
+//   which is inline-block, or with a display that min-height applies to (inline-flex, block, flex…).
+//   An <a> is inline, and min-height does nothing on an inline box.
+// Beside the floor, no other min-h class and no display that min-height does nothing on may apply
+// below md, in any branch: Tailwind orders its CSS by its own rules, not by the attribute, so either
+// could win. Nor may a spread come after the classes, where it could replace them.
+//
+// It parses the TSX with the TypeScript compiler, because an attribute can hold `=>` and a pattern
+// that reads a tag to its first `>` stops inside the onClick. A file that does not parse fails: the
+// parser recovers and goes on, so the controls it finds in such a file cannot be trusted.
+//
+// A component that hands its className straight to a raw control is named in PASS_THROUGH, and is
+// checked where it is rendered, by the classes written there: a tag with its name, or ending in it
+// (`S.SignOutButton`), from any module, and any name its module is imported under. A reference the
+// check cannot follow to a tag fails: a re-export, import(), require(), or the component as a value.
+// So does an entry whose file has no control taking exactly `{className}`, or whose file is gone.
+//
+// A control under an element hidden below md passes: `hidden`, with only an md: or wider variant to
+// show it again. Only a DOM element's own class string counts, and only one with no expression in
+// it, which nothing can add a class to; and only for the element's children, as JSX handed to it in
+// another attribute may be rendered anywhere. §7 is a phone rule.
+//
+// Anything that cannot carry the rule is named in TAP_TARGETS_ALLOWED, by its file and its classes,
+// with why it is fine. The classes are the name, so changing them asks the question again. An entry
+// that names no control in its file fails, and so, when the whole tree is read (main(), below), does
+// one whose file is gone: the list cannot outlive its controls. So does an entry whose classes are
+// one bare prop (`{className}`): that is a component passing its classes on, which belongs in
+// PASS_THROUGH, and the entry would let it through wherever it is rendered. In a name, a template's
+// expressions are written `${…}`, and classes that are one expression are written as it, in braces.
+// ---------------------------------------------------------------------------
+/** @type {{ file: string, classes: string, reason: string }[]} */
+export const TAP_TARGETS_ALLOWED = []
+
+// Components whose className goes straight to one raw control: the file that defines each, and the
+// name it is exported under. In that file, the control whose classes are exactly `{className}` passes.
+export const PASS_THROUGH = [{ file: 'components/SignOutButton.tsx', name: 'SignOutButton' }]
+
+// The shared classes that carry the rule, by the module that exports each, with what each gives its
+// element as far as this check reads it: the floor, its release at md, and for two of them a display.
+// inputClass and selectClass, made for an <input> and a <select>, have none, so on an <a> their floor
+// does nothing. buttonClass is a call, whose third argument is classes of its own.
+// tests/unit/check-invariants.test.ts holds `gives` to the real strings.
+export const SHARED_CLASSES = [
+  { module: 'components/ui/styles', name: 'tapTargetClass', gives: 'inline-flex min-h-[44px] md:min-h-0' },
+  { module: 'components/ui/styles', name: 'inputClass', gives: 'min-h-[44px] md:min-h-0' },
+  { module: 'components/ui/styles', name: 'selectClass', gives: 'min-h-[44px] md:min-h-0' },
+  { module: 'components/ui/Button', name: 'buttonClass', call: true, gives: 'inline-flex min-h-[44px] md:min-h-0' },
+]
+
+const PARSE_OPTIONS = { jsx: ts.JsxEmit.Preserve, target: ts.ScriptTarget.Latest }
+const FLOOR = 'min-h-[44px]'
+
+// Tailwind's display utilities, by the display each sets; and the displays min-height applies to.
+const DISPLAYS = new Map([
+  ['hidden', 'none'],
+  ...'block inline-block inline flex inline-flex grid inline-grid contents flow-root list-item table inline-table table-caption table-cell table-column table-column-group table-footer-group table-header-group table-row-group table-row'
+    .split(' ')
+    .map((d) => [d, d]),
+])
+const SIZED = new Set('block inline-block flex inline-flex grid inline-grid flow-root list-item table inline-table'.split(' '))
+
+const words = (s) => s.split(/\s+/).filter(Boolean)
+const SLOT = '\u0000'
+
+// A class split into its variants and its utility, at the colons outside brackets: `md:min-h-0` is
+// md and min-h-0, and `[display:none]` is one utility. Tailwind's important mark, a `!` before the
+// utility (v3) or after it (v4), is not part of the utility's name.
+function parseClass(token) {
+  const variants = []
+  let depth = 0
+  let from = 0
+  for (let k = 0; k < token.length; k++) {
+    if ('[('.includes(token[k])) depth++
+    else if ('])'.includes(token[k])) depth--
+    else if (token[k] === ':' && depth === 0) {
+      variants.push(token.slice(from, k))
+      from = k + 1
+    }
+  }
+  return { variants, utility: token.slice(from).replace(/^!|!$/g, '') }
+}
+
+// The display a utility sets, if it sets one: `hidden` sets none, and `[display:…]` what it says.
+const displayOf = (utility) => /^\[display:(.+)\]$/.exec(utility)?.[1].replaceAll('_', ' ') ?? DISPLAYS.get(utility)
+
+// Whether a class can apply below md: none of its variants is md or wider. A class applies only
+// where all its variants hold, so one of those keeps it to md and up.
+const belowMd = ({ variants }) => !variants.some((v) => /^(md|lg|xl|2xl)$/.test(v))
+
+// A module's repo path, as an import names it: without its extension, and a folder's index.tsx by the
+// folder. So '@/components/X', '../X' from a file in components/ui/, and components/X.tsx all name
+// 'components/X'.
+const modulePath = (path) => path.replace(/\.(tsx?|jsx?|mjs)$/, '').replace(/\/index$/, '')
+
+// The module an import names from the file at `from`, or null for a package.
+function moduleOf(specifier, from) {
+  if (!specifier.startsWith('@/') && !specifier.startsWith('.')) return null
+  return modulePath(specifier.startsWith('@/') ? posix.normalize(specifier.slice(2)) : posix.join(posix.dirname(from), specifier))
+}
+
+// The classes an expression gives in every state: a string's text, a template's text, and what a
+// shared class gives as the whole expression or in a template's slot. Never a branch of a condition.
+// A token a template's expression runs into keeps the SLOT, so it matches no class. `shared` maps the
+// names this file reaches the shared classes by.
+function fixedOf(e, shared) {
+  if (ts.isParenthesizedExpression(e)) return fixedOf(e.expression, shared)
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return words(e.text)
+  if (ts.isTemplateExpression(e)) {
+    const text = [e.head.text, ...e.templateSpans.map((s) => SLOT + s.literal.text)].join('')
+    return [...words(text), ...e.templateSpans.flatMap((s) => givenBy(s.expression, shared))]
+  }
+  return givenBy(e, shared)
+}
+
+function givenBy(e, shared) {
+  if (ts.isParenthesizedExpression(e)) return givenBy(e.expression, shared)
+  const call = ts.isCallExpression(e)
+  const name = ts.isIdentifier(e) ? e.text : call && ts.isIdentifier(e.expression) ? e.expression.text : null
+  const s = shared.get(name)
+  return s && Boolean(s.call) === call ? words(s.gives) : []
+}
+
+// An element's className, read four ways: `name`, to match the allowlist by; `fixed`, the classes it
+// has in every state (fixedOf); `any`, every class it may have in some state: those, and each string
+// and template text anywhere in it, buttonClass(…)'s own classes among them; and `plain`, whether it
+// is one string with no expression in it.
+function classesOf(opening, sf, shared) {
+  const attr = opening.attributes.properties.find((p) => ts.isJsxAttribute(p) && p.name.getText(sf) === 'className')
+  const e = attr?.initializer && ts.isJsxExpression(attr.initializer) ? attr.initializer.expression : attr?.initializer
+  if (!e) return { attr, name: '', fixed: [], any: [], plain: false }
+  const fixed = fixedOf(e, shared)
+  const any = [...fixed]
+  const texts = [ts.isStringLiteral, ts.isNoSubstitutionTemplateLiteral, ts.isTemplateHead, ts.isTemplateMiddle, ts.isTemplateTail]
+  const collect = (n) => {
+    if (texts.some((is) => is(n))) any.push(...words(n.text))
+    ts.forEachChild(n, collect)
+  }
+  collect(e)
+  const plain = ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)
+  const name = plain
+    ? fixed.join(' ')
+    : ts.isTemplateExpression(e)
+      ? words([e.head.text, ...e.templateSpans.map((s) => '${…}' + s.literal.text)].join('')).join(' ')
+      : `{${words(e.getText(sf)).join(' ')}}`
+  return { attr, name, fixed, any, plain }
+}
+
+// Whether classes hide their element below md in every state: `hidden` (or [display:none]) under no
+// variant, and no other display that can apply below md. `hidden sm:block` shows it from 640px, a
+// state variant such as `group-open:block` shows it on a tap, and `hidden flex` may show it at all.
+function hiddenBelowMd(tokens) {
+  const displays = tokens
+    .map(parseClass)
+    .filter(belowMd)
+    .map((c) => ({ ...c, display: displayOf(c.utility) }))
+    .filter((c) => c.display)
+  return displays.some((c) => c.variants.length === 0 && c.display === 'none') && displays.every((c) => c.display === 'none')
+}
+
+// Why a control's classes do not make it a 44px tap target below md, or null if they do.
+function problemOf(tag, { fixed, any }) {
+  const now = fixed.map(parseClass).filter((c) => c.variants.length === 0)
+  if (!now.some((c) => c.utility === FLOOR)) return { rule: 'none' }
+  if (!fixed.map(parseClass).some((c) => c.variants.join(':') === 'md' && c.utility === 'min-h-0')) return { rule: 'release' }
+  if (tag !== 'button' && !now.some((c) => SIZED.has(displayOf(c.utility)))) return { rule: 'display' }
+  for (const token of any) {
+    const c = parseClass(token)
+    if (!belowMd(c)) continue
+    if (c.utility.startsWith('min-h-') && c.utility !== FLOOR) return { rule: 'cancelled', token }
+    const display = displayOf(c.utility)
+    if (!display || display === 'none') continue
+    // A <button> lays out an inline display as inline-block; only `contents` leaves it no box.
+    if (tag === 'button' ? display === 'contents' : !SIZED.has(display)) return { rule: 'outshone', token }
+  }
+  return null
+}
+
+const SHARED = 'tapTargetClass (a text link or text button) or buttonClass(…)'
+
+function messageOf(tag, { rule, token }) {
+  if (rule === 'none') {
+    return (
+      `<${tag}> has no 44px rule in its classes. On a phone §7 asks for a 44px tap target, and controls ` +
+      `with classes of their own were left 16-20px tall (#122). Give it ${SHARED}, or if neither fits ` +
+      '`inline-flex min-h-[44px] md:min-h-0`. A component that hands its className to a control belongs ' +
+      'in PASS_THROUGH, which checks it where it is rendered. TAP_TARGETS_ALLOWED is only for a control ' +
+      'that cannot carry the rule, with why.'
+    )
+  }
+  if (rule === 'release') {
+    return (
+      `<${tag}> has min-h-[44px] without md:min-h-0, so the floor reaches the desktop layout too (#122). ` +
+      `Add md:min-h-0, or use ${SHARED}.`
+    )
+  }
+  if (rule === 'display') {
+    return (
+      `<${tag}> has a 44px floor and no display that min-height applies to. An <a> is inline, and ` +
+      'min-height does nothing on an inline box; only a <button> is inline-block by itself (#122). Add ' +
+      `inline-flex, or block or flex, beside the floor, or use ${SHARED}.`
+    )
+  }
+  const what = rule === 'cancelled' ? 'another min-height' : 'a display that min-height does nothing on'
+  return (
+    `<${tag}> has \`${token}\` beside its 44px floor: ${what}, which may apply below md, and could win ` +
+    "there, since Tailwind's CSS does not follow the order of the classes (#122). Remove it, or put it " +
+    'under md:.'
+  )
+}
+
+// Whether a node is part of a type, as `typeof SignOutButton` in ComponentProps<…> is. A type renders
+// nothing.
+function inType(node) {
+  for (let n = node.parent; n; n = n.parent) if (ts.isTypeNode(n)) return true
+  return false
+}
+
+// Whether a node is the tag of the JSX element it is in.
+const isTag = (node) =>
+  (ts.isJsxOpeningElement(node.parent) || ts.isJsxSelfClosingElement(node.parent) || ts.isJsxClosingElement(node.parent)) &&
+  node.parent.tagName === node
+
+// `wholeTree`: `files` is every file under app/ and components/, as main() reads them, so an entry in
+// the allowlist or PASS_THROUGH whose file is not among them names a file deleted or renamed. A caller
+// passing some of the files leaves it false, and such an entry is not reported. A diagnostic the
+// compiler ties to no file is a problem with `compilerOptions`, not with a file, and is reported once.
+/**
+ * @param {{ path: string, text: string }[]} files
+ * @param {typeof TAP_TARGETS_ALLOWED} [allowed]
+ * @param {{ wholeTree?: boolean, passThrough?: typeof PASS_THROUGH, compilerOptions?: import('typescript').CompilerOptions }} [options]
+ */
+export function checkTapTargets(
+  files,
+  allowed = TAP_TARGETS_ALLOWED,
+  { wholeTree = false, passThrough = PASS_THROUGH, compilerOptions = PARSE_OPTIONS } = {}
+) {
+  const out = []
+  const read = new Set()
+  const unparsed = new Set()
+  const named = new Set()
+  const passing = new Set()
+  const passNames = new Set(passThrough.map((p) => p.name))
+  const passModules = new Map(passThrough.map((p) => [modulePath(p.file), p]))
+  const bare = (entry) => /^\{[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*\}$/.test(entry.classes)
+  for (const { path, text } of files) {
+    if (!/^(app|components)\/.+\.tsx$/.test(path)) continue
+    read.add(path)
+    const { diagnostics = [] } = ts.transpileModule(text, {
+      fileName: path,
+      reportDiagnostics: true,
+      compilerOptions: { ...compilerOptions },
+    })
+    const setup = diagnostics.find((d) => !d.file)
+    if (setup) {
+      return [
+        {
+          check: 'tap-target',
+          file: 'scripts/check-invariants.mjs',
+          line: 1,
+          message:
+            `the TypeScript compiler rejected this check's compiler options ` +
+            `(${ts.flattenDiagnosticMessageText(setup.messageText, ' ')}), so no file could be read for tap ` +
+            'targets (#122). Fix the options checkTapTargets passes it.',
+        },
+      ]
+    }
+    const syntax = diagnostics.find((d) => d.file)
+    if (syntax) {
+      unparsed.add(path)
+      out.push({
+        check: 'tap-target',
+        file: path,
+        line: lineOf(text, syntax.start ?? 0),
+        message:
+          `does not parse as TSX (${ts.flattenDiagnosticMessageText(syntax.messageText, ' ')}), so its ` +
+          'controls cannot be checked for a 44px tap target (#122).',
+      })
+      continue
+    }
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const fail = (node, message) => out.push({ check: 'tap-target', file: path, line: lineOf(text, node.getStart(sf)), message })
+    const here = modulePath(path)
+    const own = passModules.get(here)
+
+    // The names this file reaches next/link's Link by, a PASS_THROUGH component, and the shared
+    // classes: what it imports them as, and in the module that defines a shared class, its own name.
+    const links = new Set()
+    const passLocals = new Set()
+    const shared = new Map(SHARED_CLASSES.filter((c) => c.module === here).map((c) => [c.name, c]))
+    for (const s of sf.statements) {
+      if (!ts.isImportDeclaration(s) || !s.importClause) continue
+      const specifier = s.moduleSpecifier.text
+      const source = moduleOf(specifier, path)
+      const pass = passModules.get(source)
+      const { name: local, namedBindings } = s.importClause
+      const specifiers = namedBindings && ts.isNamedImports(namedBindings) ? namedBindings.elements : []
+      const imported = (el) => (el.propertyName ?? el.name).text
+      if (specifier === 'next/link') {
+        if (local) links.add(local.text)
+        for (const el of specifiers) if (imported(el) === 'default') links.add(el.name.text)
+      }
+      if (pass) {
+        if (local) passLocals.add(local.text)
+        for (const el of specifiers) if ([pass.name, 'default'].includes(imported(el))) passLocals.add(el.name.text)
+      }
+      for (const el of specifiers) {
+        const c = SHARED_CLASSES.find((sc) => sc.module === source && sc.name === imported(el))
+        if (c) shared.set(el.name.text, c)
+      }
+    }
+    // A shared class's name declared again in the file, as a parameter or a local, may not be the
+    // shared class where it is used, so here it counts for nothing.
+    const declared = new Map()
+    const declare = (node) => {
+      const declaration = [ts.isVariableDeclaration, ts.isParameter, ts.isBindingElement, ts.isFunctionDeclaration, ts.isClassDeclaration].some((is) => is(node))
+      if (declaration && node.name && ts.isIdentifier(node.name)) declared.set(node.name.text, (declared.get(node.name.text) ?? 0) + 1)
+      ts.forEachChild(node, declare)
+    }
+    declare(sf)
+    for (const [local, c] of shared) if ((declared.get(local) ?? 0) > (c.module === here ? 1 : 0)) shared.delete(local)
+
+    // <a> and <button>; Link; a PASS_THROUGH component by any name it is imported under, and any tag
+    // with its name or ending in it, from any module.
+    const isControl = (tag) =>
+      ts.isIdentifier(tag)
+        ? ['a', 'button'].includes(tag.text) || links.has(tag.text) || passLocals.has(tag.text) || passNames.has(tag.text)
+        : ts.isPropertyAccessExpression(tag) && passNames.has(tag.name.text)
+    const unfollowable = (node, what) =>
+      fail(
+        node,
+        `${what}: a component PASS_THROUGH names, which this check cannot follow from here to where it is ` +
+          'rendered, to check the classes written there (#122). Import it by name, and render it as a tag.'
+      )
+    const checkControl = (opening, classes) => {
+      const tag = opening.tagName.getText(sf)
+      const attributes = opening.attributes.properties
+      const spread = classes.attr && attributes.slice(attributes.indexOf(classes.attr) + 1).find(ts.isJsxSpreadAttribute)
+      if (spread) {
+        fail(
+          opening,
+          `<${tag}> spreads {...${spread.expression.getText(sf)}} after its className, and what it spreads ` +
+            'can replace the classes this check read (#122). Put the spread before className.'
+        )
+        return
+      }
+      if (own && classes.name === '{className}') {
+        passing.add(own)
+        return
+      }
+      const problem = problemOf(tag, classes)
+      if (!problem) return
+      const entry = allowed.find((a) => !bare(a) && a.file === path && a.classes === classes.name)
+      if (entry) named.add(entry)
+      else fail(opening, messageOf(tag, problem))
+    }
+    const visit = (node, hidden) => {
+      if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+        const opening = ts.isJsxElement(node) ? node.openingElement : node
+        const classes = classesOf(opening, sf, shared)
+        const dom = ts.isIdentifier(opening.tagName) && /^[a-z]/.test(opening.tagName.text)
+        const hides = hidden || (dom && classes.plain && hiddenBelowMd(classes.fixed))
+        if (!hides && isControl(opening.tagName)) checkControl(opening, classes)
+        // Its tag and attributes as where it sits; its children as inside it.
+        ts.forEachChild(opening, (child) => visit(child, hidden))
+        if (ts.isJsxElement(node)) {
+          for (const child of node.children) visit(child, hides)
+          visit(node.closingElement, hidden)
+        }
+        return
+      }
+      if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        const pass = passModules.get(moduleOf(node.moduleSpecifier.text, path))
+        if (pass) unfollowable(node, `re-exports from ${pass.file}, where ${pass.name} is`)
+      }
+      if (ts.isCallExpression(node) && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
+        const how =
+          node.expression.kind === ts.SyntaxKind.ImportKeyword
+            ? 'import()'
+            : ts.isIdentifier(node.expression) && node.expression.text === 'require'
+              ? 'require()'
+              : null
+        const pass = how && passModules.get(moduleOf(node.arguments[0].text, path))
+        if (pass) unfollowable(node, `loads ${pass.file} with ${how}, and ${pass.name} with it`)
+      }
+      if (ts.isIdentifier(node) && passLocals.has(node.text)) {
+        const member = ts.isPropertyAccessExpression(node.parent) && node.parent.name === node
+        const binding = ts.isImportClause(node.parent) || ts.isImportSpecifier(node.parent)
+        if (!isTag(node) && !member && !binding && !inType(node)) unfollowable(node, `uses ${node.text} other than as a tag`)
+      }
+      if (ts.isPropertyAccessExpression(node) && passNames.has(node.name.text) && !isTag(node) && !inType(node)) {
+        unfollowable(node, `uses ${node.getText(sf)} other than as a tag`)
+      }
+      ts.forEachChild(node, (child) => visit(child, hidden))
+    }
+    visit(sf, false)
+  }
+  for (const entry of allowed) {
+    if (bare(entry)) {
+      out.push({
+        check: 'tap-target',
+        file: entry.file,
+        line: 1,
+        message:
+          `TAP_TARGETS_ALLOWED names a control here by "${entry.classes}", one bare prop: a component handing ` +
+          'its className on, which the entry would let through wherever it is rendered. Name the component ' +
+          'in PASS_THROUGH instead, which checks the classes written where it is rendered (#122).',
+      })
+      continue
+    }
+    if (named.has(entry) || unparsed.has(entry.file)) continue
+    if (!read.has(entry.file)) {
+      if (!wholeTree) continue
+      out.push({
+        check: 'tap-target',
+        file: entry.file,
+        line: 1,
+        message:
+          'TAP_TARGETS_ALLOWED names this file, and there is no such file under app/ or components/. ' +
+          'Remove the entry, or, if the file moved, check its control is still 44px tall on a phone and ' +
+          'name it by its new path (#122).',
+      })
+      continue
+    }
+    out.push({
+      check: 'tap-target',
+      file: entry.file,
+      line: 1,
+      message:
+        `TAP_TARGETS_ALLOWED names a control here with the classes "${entry.classes}", and no control ` +
+        'in this file that fails the 44px rule has them. Remove the entry, or, if the classes changed, ' +
+        'check the control is still 44px tall on a phone and name it by its new ones (#122).',
+    })
+  }
+  for (const entry of passThrough) {
+    if (passing.has(entry) || unparsed.has(entry.file)) continue
+    if (!read.has(entry.file)) {
+      if (!wholeTree) continue
+      out.push({
+        check: 'tap-target',
+        file: entry.file,
+        line: 1,
+        message:
+          'PASS_THROUGH names this file, and there is no such file under app/ or components/. Remove the ' +
+          'entry, or name the file it moved to (#122).',
+      })
+      continue
+    }
+    out.push({
+      check: 'tap-target',
+      file: entry.file,
+      line: 1,
+      message:
+        `PASS_THROUGH names ${entry.name} here, and no control in this file takes its classes as exactly ` +
+        '{className}, which is what lets the check read them where it is rendered instead. Give the ' +
+        'control className={className}, or remove the entry (#122).',
+    })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// 6. No class switches at sm.
+//
+// #123. Below md the app has one layout, the phone's, and md is where it switches to the desktop's.
+// Classes that switched at sm (640px) gave 640-767px a piece of the desktop layout inside the phone's:
+// two goals or accounts across, a narrowed search field, Trends' heading rows. So no string or
+// template in app/ or components/ holds a class with the sm: variant, or max-sm:, which splits the
+// phone's range the same way. Comments are not read, and nor are names: buttonClass's `sm` size is a
+// property, and its value has no sm: class.
+// ---------------------------------------------------------------------------
+export function checkSmBreakpoint(files) {
+  const out = []
+  const texts = [ts.isStringLiteral, ts.isNoSubstitutionTemplateLiteral, ts.isTemplateHead, ts.isTemplateMiddle, ts.isTemplateTail]
+  for (const { path, text } of files) {
+    if (!/^(app|components)\/.+\.tsx?$/.test(path)) continue
+    const kind = path.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+    const sf = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind)
+    const visit = (node) => {
+      if (texts.some((is) => is(node))) {
+        for (const token of words(node.text)) {
+          if (!parseClass(token).variants.some((v) => v === 'sm' || v === 'max-sm')) continue
+          out.push({
+            check: 'sm-breakpoint',
+            file: path,
+            line: lineOf(text, node.getStart(sf)),
+            message:
+              `has \`${token}\`, a class that switches at sm (640px), inside the phone layout's range. ` +
+              'Below md the app has one layout, so 640-767px would get a piece of the desktop one (#123). ' +
+              'Switch at md, where the app changes between its phone and desktop layouts.',
+          })
+        }
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(sf)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------------------
 
 function walk(dir, out = [], ext = /\.tsx?$/) {
   for (const entry of readdirSync(dir)) {
@@ -468,13 +979,16 @@ function main() {
     ...checkUserCategoryWrites([...files, ...scripts]),
     ...checkSuggestionWrites([...files, ...scripts]),
     ...checkBrandCasts(files),
+    // Every file under app/ and components/ is in `files`, so an entry for one that is not is stale.
+    ...checkTapTargets(files, TAP_TARGETS_ALLOWED, { wholeTree: true }),
+    ...checkSmBreakpoint(files),
   ]
   if (failures.length) {
     console.error(`\ncheck:invariants — ${failures.length} problem(s):\n`)
     console.error(failures.map((f) => `  ${f.file}:${f.line}\n      [${f.check}] ${f.message}`).join('\n\n'))
     console.error(
-      '\nEach of these is a shape that has shipped a real bug here. Fix it, or add the file to the ' +
-        'matching allowlist in scripts/check-invariants.mjs with a reason and an issue number.\n'
+      '\nEach of these is a shape that has shipped a real bug here. Fix it, or, where its check has an ' +
+        'allowlist in scripts/check-invariants.mjs, add it there with a reason and an issue number.\n'
     )
     process.exit(1)
   }

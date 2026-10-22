@@ -2,10 +2,10 @@ export function money(amount: number | null | undefined, currency = 'USD'): stri
   return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount ?? 0)
 }
 
-// money() without the cents, for the compact tiles below `md` (spec §4). Rounding is a DISPLAY
-// choice made in StatCard and nowhere else: no stored figure, no computed total and nothing at or
-// above `md` ever passes through here. Intl rounds half-away-from-zero, which is what a reader
-// glancing at a tile expects.
+// money() without the cents, for the dashboard's phone figures (spec §4): StatRows' figures and
+// their notes, and the saved average, which the desktop tile's note shows too. Rounding is a
+// DISPLAY choice: what this returns is only ever shown, never stored or added into a total. Intl
+// rounds half-away-from-zero, which is what a reader glancing at a figure expects.
 export function moneyWhole(amount: number | null | undefined, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',

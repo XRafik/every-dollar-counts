@@ -4,6 +4,7 @@ import { TransactionCard } from '@/components/TransactionCard'
 import { TransactionRow } from '@/components/TransactionRow'
 import { SAVE_TIMEOUT_MS } from '@/lib/save-response'
 import { neverSettles, useFakeSaveClock } from './helpers/save-replies'
+import { expectTapTarget } from './helpers/tap-target'
 
 afterEach(() => {
   cleanup()
@@ -63,6 +64,16 @@ describe('TransactionCard', () => {
   it('puts date and category on one muted meta line', () => {
     renderCard()
     expect(screen.getByText(/2026-08-29 · Food/)).toBeTruthy()
+  })
+
+  // The row is the phone's control for its transaction, a 44px tap target by its own classes (#122),
+  // not only by its two lines and padding, which a later change could shrink. The floor is released
+  // at md, as every floor in the app is: the transactions page shows these cards only below md.
+  it('gives the row a 44px floor below md', () => {
+    renderCard()
+    expect(screen.getByRole('button', { name: /Joe S Den/ }).className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['min-h-[44px]', 'md:min-h-0'])
+    )
   })
 
   // Without this the mark is invisible until the row is opened, which makes "what have I already
@@ -687,6 +698,13 @@ describe('TransactionCard learned marker (#28)', () => {
     fireEvent.click(screen.getByRole('button', { name: /edit/ }))
     expect(screen.getByText(/Learned from Joe S Den\./)).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Manage in Settings', hidden: true }).getAttribute('href')).toBe('/settings#category-rules')
+  })
+
+  // #122's comment: this sheet is the phone's, where §7 asks for 44px, and the link was 16px tall.
+  it('gives Manage in Settings a 44px hit area', () => {
+    render(<TransactionCard t={txn} category={learned} categoryOptions={['Food', 'Grocery']} />)
+    fireEvent.click(screen.getByRole('button', { name: /edit/ }))
+    expectTapTarget(screen.getByRole('link', { name: 'Manage in Settings', hidden: true }).className)
   })
 
   // Done is withheld while a save is in flight so its failure is seen; the link must not be a

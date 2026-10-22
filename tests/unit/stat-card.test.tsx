@@ -18,41 +18,44 @@ describe('StatCard', () => {
     expect(screen.queryByText('$1,182,885')).toBeNull()
   })
 
-  // A compact tile carries BOTH: the rounded one for the phone, the exact one from md up. CSS
-  // decides which is seen, so both are in the DOM and each must be the right string.
-  it('carries a rounded figure and an exact one on a compact tile', () => {
+  // A compact tile is shown only from md up: below md the dashboard, its one caller, shows StatRows
+  // instead (#136). So it shows its figure exactly, at every width, and carries no rounded copy
+  // for a phone that never sees it (#137).
+  it('shows a compact tile its figure exactly, and nothing rounded', () => {
     render(<StatCard label="Cash on hand" amount={34920.49} />)
-    expect(screen.getByText('$34,920')).toBeTruthy()
     expect(screen.getByText('$34,920.49')).toBeTruthy()
+    expect(screen.queryByText('$34,920')).toBeNull()
   })
 
-  it('hides the rounded figure from md up and the exact figure below it', () => {
-    render(<StatCard label="Cash on hand" amount={34920.49} />)
-    // Exact strings, not `toContain`. Substring matching has a blind spot at each end here:
-    // 'hidden' is inside 'md:hidden', and 'md:inline' survives dropping the leading 'hidden' —
-    // which would show BOTH figures on every phone and still pass. The whole class string is
-    // short and is the entire behaviour, so assert all of it.
-    expect(screen.getByText('$34,920').className).toBe('md:hidden')
-    expect(screen.getByText('$34,920.49').className).toBe('hidden md:inline')
+  // One string, with nothing in it hidden at any width: no md:hidden and md:inline pair.
+  it('renders the compact figure as one string', () => {
+    const { container } = render(<StatCard label="Cash on hand" amount={34920.49} />)
+    const figure = container.querySelector('.tabular-nums')!
+    expect(figure.children.length).toBe(0)
+    expect(figure.textContent).toBe('$34,920.49')
   })
 
   // The desktop-unchanged constraint is this stage's hardest rule, and it is the one thing no
   // other test here can see — jsdom does no layout, so the class strings ARE the evidence.
-  // Both variants must resolve to the pre-existing scale at md and above; only below md differs.
+  // Both variants must resolve to the pre-existing scale at md and above. The compact tile was
+  // text-2xl from sm (640px) and text-3xl from lg; it is shown only from md up, so text-2xl and
+  // lg:text-3xl give it the sizes it always had there.
   it('keeps the desktop type scale on both variants', () => {
     const { container: hero } = render(<StatCard label="Net worth" amount={1} variant="hero" />)
-    expect(hero.querySelector('.tabular-nums')!.className).toContain('md:text-2xl')
-    expect(hero.querySelector('.tabular-nums')!.className).toContain('lg:text-3xl')
+    const heroClasses = hero.querySelector('.tabular-nums')!.className.split(/\s+/)
+    expect(heroClasses).toContain('md:text-2xl')
+    expect(heroClasses).toContain('lg:text-3xl')
     cleanup()
     const { container: compact } = render(<StatCard label="Cash" amount={1} />)
-    expect(compact.querySelector('.tabular-nums')!.className).toContain('sm:text-2xl')
-    expect(compact.querySelector('.tabular-nums')!.className).toContain('lg:text-3xl')
+    const compactClasses = compact.querySelector('.tabular-nums')!.className.split(/\s+/)
+    expect(compactClasses).toContain('text-2xl')
+    expect(compactClasses).toContain('lg:text-3xl')
   })
 
-  // The md/lg segments above are what must NOT change; this pins what the stage actually
-  // delivers — the size below `md`. Mutating hero's first segment to `text-xl` passed all 476
-  // tests before this existed, which would have silently undone §4's "larger than today".
-  it('pins the figure classes of both variants, phone size included', () => {
+  // The md/lg segments above are what must NOT change; this pins the rest, the hero's size below
+  // `md` included. Mutating hero's first segment to `text-xl` passed all 476 tests before this
+  // existed, which would have silently undone §4's "larger than today".
+  it('pins the figure classes of both variants', () => {
     const { container: hero } = render(<StatCard label="Net worth" amount={1} variant="hero" />)
     expect(hero.querySelector('.tabular-nums')!.className).toBe(
       'mt-2 font-semibold tracking-tight tabular-nums text-ink text-3xl md:text-2xl lg:text-3xl'
@@ -60,13 +63,18 @@ describe('StatCard', () => {
     cleanup()
     const { container: compact } = render(<StatCard label="Cash" amount={1} />)
     expect(compact.querySelector('.tabular-nums')!.className).toBe(
-      'mt-2 font-semibold tracking-tight tabular-nums text-ink text-xl sm:text-2xl lg:text-3xl'
+      'mt-2 font-semibold tracking-tight tabular-nums text-ink text-2xl lg:text-3xl'
     )
   })
 
   it('defaults to compact when no variant is given', () => {
-    render(<StatCard label="Spent" amount={8776.51} />)
-    expect(screen.getByText('$8,777')).toBeTruthy()
+    const { container: unset } = render(<StatCard label="Spent" amount={8776.51} />)
+    const figure = unset.querySelector('.tabular-nums')!
+    expect(figure.textContent).toBe('$8,776.51')
+    const asDefault = figure.className
+    cleanup()
+    const { container: compact } = render(<StatCard label="Spent" amount={8776.51} variant="compact" />)
+    expect(asDefault).toBe(compact.querySelector('.tabular-nums')!.className)
   })
 
   it('names the tile', () => {
@@ -76,13 +84,9 @@ describe('StatCard', () => {
 
   // The "Saved this month" tile turns red when negative. That rule used to live in the caller's
   // JSX, which is why the caller had to pre-format the figure in the first place.
-  //
-  // Asserted on `hero`, where the figure is a direct child of the toned wrapper. On a compact tile
-  // getByText returns the inner md:hidden/hidden span, which carries no tone — the tone is declared
-  // once on the wrapper so the rounded and exact strings cannot end up different colours.
-  it('paints a coral figure when asked', () => {
-    render(<StatCard label="Saved" amount={-120} variant="hero" tone="coral" />)
-    expect(screen.getByText('-$120.00').className).toContain('text-coral')
+  it.each(['hero', 'compact'] as const)('paints a coral figure when asked, on a %s tile', (variant) => {
+    render(<StatCard label="Saved" amount={-120} variant={variant} tone="coral" />)
+    expect(screen.getByText('-$120.00').className.split(/\s+/)).toContain('text-coral')
   })
 
   it('renders a footnote when given one', () => {
@@ -93,5 +97,12 @@ describe('StatCard', () => {
   it('becomes a link when given an href', () => {
     render(<StatCard label="Cash" amount={10} href="/breakdown/cash" />)
     expect(screen.getByRole('link').getAttribute('href')).toBe('/breakdown/cash')
+  })
+
+  // The link wraps the whole tile and was tall from the Card inside it alone. It carries a 44px floor
+  // below md itself (#122), released from md up so the desktop grid is as it was.
+  it('gives the link a 44px floor below md', () => {
+    render(<StatCard label="Cash" amount={10} href="/breakdown/cash" />)
+    expect(screen.getByRole('link').className.split(/\s+/)).toEqual(expect.arrayContaining(['min-h-[44px]', 'md:min-h-0']))
   })
 })

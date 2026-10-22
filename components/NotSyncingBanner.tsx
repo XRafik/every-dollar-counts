@@ -14,7 +14,7 @@ export function NotSyncingBanner({ items }: { items: Pick<ItemSummary, 'institut
   return (
     <Link
       href="/settings"
-      className="block rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral"
+      className="block min-h-[44px] rounded-card border border-coral/40 bg-coral/10 px-4 py-3 text-sm text-coral md:min-h-0"
     >
       {unhealthy.length === 1
         ? `${unhealthy[0].institution_name ?? 'A bank'} isn't syncing`

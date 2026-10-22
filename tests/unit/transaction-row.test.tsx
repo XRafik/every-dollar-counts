@@ -171,6 +171,16 @@ describe('TransactionRow learned marker (#28)', () => {
     expect(marker()).toBeNull()
   })
 
+  // The table it sits in is desktop only, but the marker is 44px square below md all the same (#122):
+  // whoever renders it, a phone gets a tap target 44px across, not the 14px of its icon. From md up
+  // both floors are released, and it is the 34px of the desktop select, so the icon centres on it.
+  it('keeps its 34px desktop box, with a 44px square floor below md', () => {
+    renderRow({}, LEARNED)
+    expect(marker()!.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(['h-[34px]', 'min-h-[44px]', 'md:min-h-0', 'min-w-[44px]', 'md:min-w-0'])
+    )
+  })
+
   // The marker means "a rule filed this"; a pick the person made is not a rule's doing.
   it('a hand pick shows no marker', () => {
     renderRow({ user_category: 'Grocery' }, { name: 'Grocery', source: 'pick', ruleId: null, bankName: 'Food' })

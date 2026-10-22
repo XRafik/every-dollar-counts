@@ -140,12 +140,13 @@ describe('MissingBalancesNote', () => {
   })
 
   // Nothing is broken, so it is quieter than the coral "isn't syncing" banner: a plain bordered
-  // note in muted text, the same on every page.
+  // note in muted text, the same on every page. Refresh sits beside the words from md, where the app
+  // switches between its phone and desktop layouts (#123), and under them below it.
   it('keeps a quieter look than the banner', () => {
     const { container } = render(<MissingBalancesNote items={[bank('amex', 'Amex')]} accounts={[]} />)
     const note = container.firstElementChild!
     expect(note.className).toBe(
-      'flex flex-col gap-3 rounded-card border border-line bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between'
+      'flex flex-col gap-3 rounded-card border border-line bg-surface px-4 py-3 md:flex-row md:items-center md:justify-between'
     )
     expect(container.querySelector('p')!.className).toBe('text-sm text-muted')
   })
