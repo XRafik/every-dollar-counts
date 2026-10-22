@@ -10,6 +10,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
 import { CategoryPicker } from '@/components/CategoryPicker'
 import { learnedText } from '@/components/LearnedMarker'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { suggestedText } from '@/components/SuggestedMarker'
 import { LearnedIcon, SuggestedIcon } from '@/components/ui/icons'
 import { ReimbursableCheckbox } from '@/components/ReimbursableCheckbox'
@@ -191,7 +192,8 @@ export function TransactionCard({
                         {!busy && (
                           <>
                             {' '}
-                            <Link href="/settings#category-rules" className="font-medium text-emerald hover:text-emerald-600">
+                            {/* scroll={false}: Settings scrolls to the card itself (ScrollToSection). */}
+                            <Link href={CATEGORY_RULES_HREF} scroll={false} className="font-medium text-emerald hover:text-emerald-600">
                               Manage in Settings
                             </Link>
                           </>

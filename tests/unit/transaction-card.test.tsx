@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest'
+import type { ReactNode } from 'react'
 import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { TransactionCard } from '@/components/TransactionCard'
 import { TransactionRow } from '@/components/TransactionRow'
 import { SAVE_TIMEOUT_MS } from '@/lib/save-response'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { neverSettles, useFakeSaveClock } from './helpers/save-replies'
 
 afterEach(() => {
@@ -12,6 +14,15 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
+// next/link as a plain <a> that also shows whether the router may scroll after following it, which
+// the real one keeps to itself (#156).
+vi.mock('next/link', async () => {
+  const { createElement } = await import('react')
+  return {
+    default: ({ href, scroll, children, ...rest }: { href: string; scroll?: boolean; children?: ReactNode }) =>
+      createElement('a', { ...rest, href, 'data-scroll': String(scroll ?? true) }, children),
+  }
+})
 
 // jsdom does not implement showModal()/close() on <dialog>, so Dialog's open effect cannot run
 // without these. Copied verbatim from tests/unit/confirm-dialog.test.tsx:11-18, which needs them
@@ -682,11 +693,15 @@ describe('TransactionCard learned marker (#28)', () => {
     expect(button.querySelector('svg')).not.toBeNull()
   })
 
-  it('shows where the rule lives in the sheet', () => {
+  // Settings scrolls to the card itself, as the card mounts (ScrollToSection). Left to scroll, the
+  // router would then take the page back to its top (#156).
+  it('shows where the rule lives in the sheet, and opens Settings there', () => {
     render(<TransactionCard t={txn} category={learned} categoryOptions={['Food', 'Grocery']} />)
     fireEvent.click(screen.getByRole('button', { name: /edit/ }))
     expect(screen.getByText(/Learned from Joe S Den\./)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Manage in Settings', hidden: true }).getAttribute('href')).toBe('/settings#category-rules')
+    const link = screen.getByRole('link', { name: 'Manage in Settings', hidden: true })
+    expect(link.getAttribute('href')).toBe(CATEGORY_RULES_HREF)
+    expect(link.getAttribute('data-scroll')).toBe('false')
   })
 
   // Done is withheld while a save is in flight so its failure is seen; the link must not be a

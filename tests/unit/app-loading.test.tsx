@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { readdirSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { render, screen, cleanup } from '@testing-library/react'
 import Loading from '@/app/(app)/loading'
@@ -80,23 +80,13 @@ describe('app/(app)/loading.tsx', () => {
   })
 })
 
-// Next's router scrolls to a link's #target from the page's own segment, the one new leaf it gives a
-// navigation's scroll to. Under app/(app)/loading.tsx, a level above the route folders, that segment
-// mounts with the page, and the scroll lands. A loading.tsx in any folder below, beside a page.tsx or
-// above one, puts a boundary between the page and its own segment's scroll handler: the router runs
-// that handler while the boundary's placeholder is up, finds no target and drops the scroll. In a
-// production build, with one beside the Settings page, both links to /settings#category-rules
-// (TransactionCard, LearnedMarker) landed at the top of Settings. A <Suspense> around the card does
-// the same (tests/unit/settings-page.test.tsx).
-describe('app/(app)/loading.tsx: links to a #target', () => {
+// The one boundary for every tab: without it Next prefetches nothing of these dynamic pages, and a
+// tap leaves the old page up until the new one has been read.
+describe('app/(app)/loading.tsx: where it is', () => {
   // From this file, not the working directory, so it checks this checkout wherever it runs from.
   const fromRoot = (path: string) => join(dirname(fileURLToPath(import.meta.url)), '..', '..', path)
 
-  it('is the only loading boundary under app/(app), with none in any folder below it', () => {
-    const files = readdirSync(fromRoot('app/(app)'), { recursive: true, encoding: 'utf8' })
-    // The walk reaches the pages, and finds this boundary, so finding no other means something.
-    expect(files).toContain(join('settings', 'page.tsx'))
-    expect(files).toContain('loading.tsx')
-    expect(files.filter((f) => /^loading\./.test(basename(f)) && dirname(f) !== '.')).toEqual([])
+  it('is in app/(app), above every tab', () => {
+    expect(existsSync(fromRoot('app/(app)/loading.tsx'))).toBe(true)
   })
 })

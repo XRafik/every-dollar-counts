@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import Link from 'next/link'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { TransactionRow } from '@/components/TransactionRow'
+import { LearnedMarker } from '@/components/LearnedMarker'
 import type { ResolvedCategory } from '@/lib/category-rules'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 
 afterEach(cleanup)
 
@@ -157,10 +160,18 @@ describe('TransactionRow card payment with a pick', () => {
 describe('TransactionRow learned marker (#28)', () => {
   const marker = () => screen.queryByRole('link', { name: /learned from/ })
 
+  // Settings scrolls to the card itself, as the card mounts (ScrollToSection). Left to scroll, the
+  // router would then take the page back to its top (#156).
+  it('opens Settings on Category rules, with the router left not to scroll', () => {
+    const el = LearnedMarker({ category: 'Grocery', merchant: 'Joe S Den' })
+    expect(el.type).toBe(Link)
+    expect(el.props).toMatchObject({ href: CATEGORY_RULES_HREF, scroll: false })
+  })
+
   it('appears only when a rule changed the name', () => {
     renderRow({}, LEARNED)
     const link = marker()!
-    expect(link.getAttribute('href')).toBe('/settings#category-rules')
+    expect(link.getAttribute('href')).toBe(CATEGORY_RULES_HREF)
     expect(link.getAttribute('aria-label')).toBe('Grocery, learned from Joe S Den. Manage in Settings → Category rules.')
     expect(link.getAttribute('title')).toBe(link.getAttribute('aria-label'))
     cleanup()

@@ -10,21 +10,12 @@
 // is filled, with no white card or border, so with Reduce Motion on, when the pulse stops, it still
 // reads as a placeholder rather than a page that loaded empty.
 //
-// Keep it the only loading boundary under app/(app), and keep <Suspense> away from a card a link
-// scrolls to. Next's router scrolls a tap in the app to a link's #target from the page's own
-// segment, which here mounts with the page, so /settings#category-rules lands on its card. A
-// loading.tsx in a folder below, or a <Suspense> around the card, has the router try that scroll
-// while a placeholder is up, find no target and drop it (tests/unit/app-loading.test.tsx,
-// tests/unit/settings-page.test.tsx).
-//
-// A full page load of that address, as from a new tab, is the browser's to scroll, not the
-// router's, and it can do so before the page has streamed in behind this placeholder.
-// ScrollToHashTarget, in the Settings page, puts the card in view then.
-//
-// Not covered: a tap in the app whose fetch of the page fails. The router falls back to loading the
-// address in full, but that is the address it already showed with this placeholder, and with a
-// #fragment the browser takes it as a jump within the page. Nothing loads, and the placeholder
-// stays up until the person taps something else. A link with no #fragment loads in full.
+// A link that opens a page on one of its parts names the part with a query, not a #fragment:
+// /settings?section=category-rules, which ScrollToSection in that page scrolls to. Under this
+// boundary a tapped link's address is already showing, with this placeholder, before its page has
+// been read. If reading it fails, Next's router falls back to loading that address in full, and to
+// an address with a #fragment the browser takes that as a jump within the page: nothing loads, and
+// the placeholder stays up. An address with a query loads in full.
 export default function Loading() {
   return (
     <div role="status" className="space-y-6">

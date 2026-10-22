@@ -80,7 +80,6 @@ vi.mock('@/lib/plaid-slots', () => ({ countSlotsUsed: async () => null, LIFETIME
 // For the tests that render the bank list the page hands out, to read the card as the person does.
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
 
-import { Suspense } from 'react'
 import { render, screen, cleanup } from '@testing-library/react'
 import SettingsPage from '@/app/(app)/settings/page'
 import { TimezoneCard } from '@/components/TimezoneCard'
@@ -90,7 +89,8 @@ import { BankList } from '@/components/BankList'
 import { HomeValueCard } from '@/components/HomeValueCard'
 import { LinkButton } from '@/components/LinkButton'
 import { Card } from '@/components/ui/Card'
-import { ScrollToHashTarget } from '@/components/ScrollToHashTarget'
+import { ScrollToSection } from '@/components/ScrollToSection'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { txnRows } from '../stubs/postgrest-pages'
 import { catalogFingerprint } from '@/lib/category-rules'
 
@@ -528,39 +528,30 @@ describe('Settings categories and rules', () => {
   })
 })
 
-// The element with `id`, and every element it sits in, outermost first. Walked as findProps walks:
-// only the page's own markup, so a component wrapping the card hides it, and the path comes back
-// null for a test to notice.
-function pathTo(node: unknown, id: string, outer: unknown[] = []): unknown[] | null {
+// The first element with this id in the page's own markup, walked as findProps walks.
+function byId(node: unknown, id: string): unknown {
   if (node == null || typeof node !== 'object') return null
   if (Array.isArray(node)) {
     for (const child of node) {
-      const found = pathTo(child, id, outer)
+      const found = byId(child, id)
       if (found) return found
     }
     return null
   }
   const el = node as { props?: { id?: unknown; children?: unknown } }
-  const path = [...outer, el]
-  if (el.props?.id === id) return path
-  return el.props && 'children' in el.props ? pathTo(el.props.children, id, path) : null
+  if (el.props?.id === id) return el
+  return el.props && 'children' in el.props ? byId(el.props.children, id) : null
 }
 
-// TransactionCard's "Manage in Settings" and LearnedMarker link to /settings#category-rules. Next's
-// router scrolls to the card as the page commits (#156). In a <Suspense>, the card would still be
-// behind that boundary's fallback when the page commits, and the router, finding no target, drops
-// the scroll, as it does with a loading.tsx beside this page (tests/unit/app-loading.test.tsx).
-describe('Settings: the Category rules card a link scrolls to (#156)', () => {
-  it('is in no <Suspense> boundary', async () => {
-    const path = pathTo(await SettingsPage(), 'category-rules')
-    expect(path).not.toBeNull()
-    expect(path!.filter((el) => (el as { type?: unknown }).type === Suspense)).toEqual([])
-  })
-
-  // A full page load, as from a new tab, streams the page in after app/(app)/loading.tsx's
-  // placeholder, and the browser's own scroll to #category-rules can come before the card is there.
-  it('is scrolled into view after a full page load that left Settings at its top', async () => {
+// TransactionCard's "Manage in Settings" and LearnedMarker link to CATEGORY_RULES_HREF (#156).
+// ScrollToSection brings the card that link's section names into view, so the link, the scroll and
+// the card must agree on it.
+describe('Settings: opened on the Category rules card by a link (#156)', () => {
+  it('scrolls to the card the links name, which is on the page', async () => {
     const tree = await SettingsPage()
-    expect(findProps(tree, ScrollToHashTarget)).toEqual({ id: 'category-rules' })
+    const section = new URL(CATEGORY_RULES_HREF, 'http://localhost').searchParams.get('section')
+    expect(section).toBe('category-rules')
+    expect(findProps(tree, ScrollToSection)).toEqual({ id: section })
+    expect(byId(tree, section!)).toMatchObject({ type: Card })
   })
 })
