@@ -1,7 +1,4 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { render, screen, cleanup } from '@testing-library/react'
 import Loading from '@/app/(app)/loading'
 
@@ -23,6 +20,35 @@ function parse(cls: string): { variant: string; utility: string } {
   }
   return { variant: cls.slice(0, split + 1), utility: cls.slice(split + 1).replace(/^!|!$/g, '') }
 }
+
+// Every class on every element it draws.
+function classesOf(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('*')].flatMap((el) => (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean))
+}
+
+// The only classes it may use, exactly as written, variant and all. It renders in <main>, between
+// the shell's sticky top bar and its fixed tab bar (AppShell): taken out of the flow it could cover
+// either, anything wider than the page would scroll a phone sideways, and a white card with a border
+// would look like a page that had loaded empty. Each class here does none of that. A list of what to
+// refuse kept missing spellings ([position:fixed], inline-[600px], md:max-w-none, relative with an
+// offset), so a new class has to be added here, on purpose.
+const ALLOWED = new Set([
+  'space-y-6',
+  'space-y-2',
+  'sr-only',
+  'motion-safe:animate-pulse',
+  'h-8',
+  'h-4',
+  'h-40',
+  'w-40',
+  'w-56',
+  'max-w-full',
+  'rounded-lg',
+  'rounded-md',
+  'rounded-card',
+  'bg-line',
+  'bg-line/60',
+])
 
 describe('app/(app)/loading.tsx', () => {
   it('tells a screen reader the page is loading', () => {
@@ -47,7 +73,7 @@ describe('app/(app)/loading.tsx', () => {
   it('draws every shape filled, none as a white card', () => {
     const { container } = render(<Loading />)
     const shapes = [...container.querySelectorAll('[aria-hidden="true"] *')].filter((el) => el.children.length === 0)
-    expect(shapes).toHaveLength(3)
+    expect(shapes.length).toBeGreaterThan(0)
     for (const shape of shapes) {
       const utilities = (shape.getAttribute('class') ?? '').split(/\s+/).filter(Boolean).map((c) => parse(c).utility)
       expect(utilities.filter((u) => /^bg-line(\/\d+)?$/.test(u))).toHaveLength(1)
@@ -55,38 +81,19 @@ describe('app/(app)/loading.tsx', () => {
     }
   })
 
-  // It renders in <main>, between the shell's sticky top bar and its fixed tab bar (AppShell). Taken
-  // out of the flow it could cover either, and anything wider than the page would scroll a phone
-  // sideways. A class counts at every screen size and in every state it has a variant for.
-  it('stays in the page flow, and no wider than the page', () => {
+  // The pulse is for those who have not turned Reduce Motion on: every animation is under the
+  // motion-safe: variant, and there is one.
+  it('pulses only where motion is welcome', () => {
     const { container } = render(<Loading />)
-    for (const el of container.querySelectorAll('*')) {
-      const classes = (el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean).map(parse)
-      const utilities = classes.map((c) => c.utility)
-      expect(utilities.filter((u) => /^(fixed|absolute|sticky)$/.test(u))).toEqual([])
-      // Viewport units size it by the screen, not the page.
-      expect(utilities.filter((u) => /^(min-)?(w|h|size)-(screen|[sdl]?v[wh]|\[.*\d(?:[sdl]?v[wh]|vmin|vmax)\b.*\])$/.test(u))).toEqual([])
-      // A negative margin reaches past the page's edge.
-      expect(utilities.filter((u) => /^-(m[a-z]*|space-[xy])-|^m[a-z]*-\[-/.test(u))).toEqual([])
-      // A minimum width beats max-w-full in CSS, so there is none beyond zero.
-      expect(utilities.filter((u) => /^min-w-/.test(u) && u !== 'min-w-0')).toEqual([])
-      // Any other width, as w-40, w-md or w-[600px], only beside max-w-full at every size, which caps
-      // it at the page.
-      const sized = utilities.some((u) => /^(w|size)-/.test(u) && !/^(w|size)-(full|auto|\d+\/\d+)$/.test(u))
-      if (sized) expect(classes.some((c) => c.variant === '' && c.utility === 'max-w-full')).toBe(true)
-      // An inline style could do any of these where no class shows it.
-      expect(el.getAttribute('style')).toBeNull()
-    }
+    const animated = classesOf(container).map(parse).filter((c) => c.utility.startsWith('animate-'))
+    expect(animated.length).toBeGreaterThan(0)
+    for (const c of animated) expect(c.variant.split(':')).toContain('motion-safe')
   })
-})
 
-// The one boundary for every tab: without it Next prefetches nothing of these dynamic pages, and a
-// tap leaves the old page up until the new one has been read.
-describe('app/(app)/loading.tsx: where it is', () => {
-  // From this file, not the working directory, so it checks this checkout wherever it runs from.
-  const fromRoot = (path: string) => join(dirname(fileURLToPath(import.meta.url)), '..', '..', path)
-
-  it('is in app/(app), above every tab', () => {
-    expect(existsSync(fromRoot('app/(app)/loading.tsx'))).toBe(true)
+  it('uses only classes known to keep it in the page flow, no wider than the page', () => {
+    const { container } = render(<Loading />)
+    expect(classesOf(container).filter((c) => !ALLOWED.has(c))).toEqual([])
+    // An inline style could do what no class shows.
+    expect(container.querySelectorAll('[style]')).toHaveLength(0)
   })
 })

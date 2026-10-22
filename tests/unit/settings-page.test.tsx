@@ -80,6 +80,7 @@ vi.mock('@/lib/plaid-slots', () => ({ countSlotsUsed: async () => null, LIFETIME
 // For the tests that render the bank list the page hands out, to read the card as the person does.
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
 
+import { Suspense } from 'react'
 import { render, screen, cleanup } from '@testing-library/react'
 import SettingsPage from '@/app/(app)/settings/page'
 import { TimezoneCard } from '@/components/TimezoneCard'
@@ -543,15 +544,63 @@ function byId(node: unknown, id: string): unknown {
   return el.props && 'children' in el.props ? byId(el.props.children, id) : null
 }
 
+// Every <Suspense> in the page's own markup before the element with this id, in document order,
+// other than one around it, and whether the walk reached that element at all.
+function suspenseBefore(node: unknown, id: string): { reached: boolean; boundaries: unknown[] } {
+  const boundaries: unknown[] = []
+  let reached = false
+  const walk = (n: unknown): void => {
+    if (reached || n == null || typeof n !== 'object') return
+    if (Array.isArray(n)) {
+      for (const child of n) walk(child)
+      return
+    }
+    const el = n as { type?: unknown; props?: { id?: unknown; children?: unknown } }
+    if (el.props?.id === id) {
+      reached = true
+      return
+    }
+    if (el.type === Suspense && !byId(el.props?.children, id)) boundaries.push(el)
+    if (el.props && 'children' in el.props) walk(el.props.children)
+  }
+  walk(node)
+  return { reached, boundaries }
+}
+
 // TransactionCard's "Manage in Settings" and LearnedMarker link to CATEGORY_RULES_HREF (#156).
 // ScrollToSection brings the card that link's section names into view, so the link, the scroll and
 // the card must agree on it.
 describe('Settings: opened on the Category rules card by a link (#156)', () => {
-  it('scrolls to the card the links name, which is on the page', async () => {
+  const section = new URL(CATEGORY_RULES_HREF, 'http://localhost').searchParams.get('section')!
+
+  // In the card, so it scrolls there whether the card's read worked or failed: a link opens Settings
+  // on the card either way, and a failed card offers its own Try again.
+  it.each([
+    ['loaded', () => {}],
+    ['failed to load', () => (results.categories = { data: null, error: { message: 'boom' } })],
+  ])('scrolls to the Category rules card when it has %s', async (_state, setUp) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setUp()
     const tree = await SettingsPage()
-    const section = new URL(CATEGORY_RULES_HREF, 'http://localhost').searchParams.get('section')
-    expect(section).toBe('category-rules')
-    expect(findProps(tree, ScrollToSection)).toEqual({ id: section })
-    expect(byId(tree, section!)).toMatchObject({ type: Card })
+    const rulesCard = card(tree, 'Category rules')
+    expect(rulesCard).not.toBeNull()
+    expect(byId(tree, section)).toBe(rulesCard)
+    expect(findProps(rulesCard, ScrollToSection)).toEqual({ id: section })
+  })
+
+  // A phone's sticky top bar is 56px (AppShell's h-14). scroll-mt-20 stops the scroll 80px short, so
+  // the card's heading lands below the bar rather than under it.
+  it("keeps the card's heading clear of the phone's sticky top bar", async () => {
+    const rulesCard = card(await SettingsPage(), 'Category rules') as { props: { className: string } }
+    expect(rulesCard.props.className.split(/\s+/)).toContain('scroll-mt-20')
+  })
+
+  // ScrollToSection scrolls once, as the page mounts. Anything that streamed in above the card after
+  // that, through a <Suspense>, would push the card down and out of place, and iOS Safari, which has
+  // no scroll anchoring, would leave it there.
+  it('has no <Suspense> above the card', async () => {
+    const { reached, boundaries } = suspenseBefore(await SettingsPage(), section)
+    expect(reached).toBe(true)
+    expect(boundaries).toEqual([])
   })
 })
