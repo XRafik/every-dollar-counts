@@ -28,7 +28,7 @@ export function MissingBalancesNote({
   const { syncing, behind } = bySync(withoutAccounts(items, accounts))
   if (syncing.length === 0 && behind.length === 0) return null
   return (
-    <div className="flex flex-col gap-3 rounded-card border border-line bg-surface px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-card border border-line bg-surface px-4 py-3 md:flex-row md:items-center md:justify-between">
       <p className="text-sm text-muted">
         {[
           syncing.length ? `${balancesPending(syncing)} Press Refresh to fetch them.` : '',

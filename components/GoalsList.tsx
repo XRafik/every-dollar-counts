@@ -174,7 +174,7 @@ export function GoalsList({
       {initialGoals.length === 0 ? (
         <p className="text-sm text-muted">No savings goals yet. Add one above.</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           {initialGoals.map((g) => (
             <GoalCard
               key={g.id}

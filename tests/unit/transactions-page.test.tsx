@@ -638,3 +638,18 @@ describe('Transactions tap targets (#122)', () => {
     expectTapTarget(controlWithText(await render(), 'Connect a bank').props.className)
   })
 })
+
+// One breakpoint (#123): the search field fills its row below md and is 16rem from md up. It
+// narrowed at sm, so at 640-767px it was 16rem beside the phone layout of everything around it.
+describe('Transactions layout', () => {
+  it('narrows the search field at md, not sm', async () => {
+    type El = { props: { children?: unknown; className?: string; name?: string } }
+    const header = blocks(await render()).find((b) => b.type === PageHeader)!
+    const form = header.props.actions as El
+    const holder = ([] as unknown[])
+      .concat(form.props.children)
+      .flat()
+      .find((c) => (c as El | null)?.props?.children && ((c as El).props.children as El).props?.name === 'q') as El
+    expect(holder.props.className).toBe('w-full md:w-64')
+  })
+})

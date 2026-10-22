@@ -46,7 +46,7 @@ describe('CategoryRulesCard', () => {
   })
 
   // A long merchant name truncates; the count, which is the point of the row, never does.
-  it('stacks below sm and never truncates the count', () => {
+  it('stacks below md and never truncates the count', () => {
     render(<CategoryRulesCard rules={[safeway({ merchantLabel: 'A very long merchant name that will not fit on a phone' })]} categories={CATS} suggestedCount={null} />)
     const line = countLine()
     expect(line.textContent).toBe('145 changed by this rule · 14 set by you')
@@ -59,13 +59,22 @@ describe('CategoryRulesCard', () => {
     expect(label.className).toContain('truncate')
     expect(label.getAttribute('title')).toBe('A very long merchant name that will not fit on a phone')
     const li = label.closest('li')!
-    expect(li.className).toMatch(/flex-col.*sm:flex-row/)
+    const row = li.className.split(/\s+/)
+    // A column below md and a row from md, the one breakpoint (#123). It switched at sm, which gave
+    // 640-767px the desktop row while everything around it kept the phone layout.
+    expect(row).toEqual(expect.arrayContaining(['flex', 'flex-col', 'md:flex-row', 'md:items-center', 'md:gap-3']))
     // Lets the controls, and the alert, drop to their own line rather than squeeze the text to 0px (1280px, Chromium).
-    expect(li.className).toContain('sm:flex-wrap')
+    expect(row).toContain('md:flex-wrap')
     // Keeps ~298px for the longest count beside the controls; without it the count ran under them at 640-900px.
-    expect(label.parentElement!.className).toContain('sm:flex-[1_0_19rem]')
-    // Caps the select at 192px from md up, where selectClass's md:w-auto let a long category name widen it.
-    expect(screen.getByRole('combobox').className).toContain('md:max-w-48')
+    expect(label.parentElement!.className.split(/\s+/)).toContain('md:flex-[1_0_19rem]')
+    // Fills the row below md. From md up selectClass's md:w-auto let a long category name widen it,
+    // so min and max widths pin it at 192px there: a second md: width would leave md:w-auto and it
+    // to their order in the stylesheet.
+    const select = screen.getByRole('combobox').className.split(/\s+/)
+    expect(select).toEqual(expect.arrayContaining(['w-full', 'min-w-0', 'flex-1', 'md:flex-none', 'md:min-w-48', 'md:max-w-48']))
+    expect(select.filter((c) => /^md:w-/.test(c))).toEqual(['md:w-auto'])
+    // Nothing on the row switches at sm.
+    expect(li.outerHTML).not.toMatch(/\bsm:/)
   })
 
   it('explains that a pick teaches', () => {
@@ -133,6 +142,8 @@ describe('CategoryRulesCard', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('That category is not one of yours.')
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('c-grocery')
     expect(refresh).not.toHaveBeenCalled()
+    // A line of its own on the row from md up, as the row's other pieces wrap (#123).
+    expect(screen.getByRole('alert').className.split(/\s+/)).toContain('md:basis-full')
   })
 
   // 404 and 409 are the server saying this card is stale: keep its message and show the latest.

@@ -21,7 +21,7 @@ export function AccountList({ accounts }: { accounts: Account[] }) {
   const canCollapse = hidden.length > 0
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
       {accounts.slice(0, COLLAPSED).map((a) => (
         <AccountCard key={a.id} account={a} />
       ))}

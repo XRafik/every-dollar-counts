@@ -92,6 +92,7 @@ vi.mock('@/lib/category-context', async (importOriginal) => {
 import TrendsPage from '@/app/(app)/trends/page'
 import { SpendByCategoryChart } from '@/components/SpendByCategoryChart'
 import { NotSyncingBanner } from '@/components/NotSyncingBanner'
+import { Card } from '@/components/ui/Card'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { sug } from './helpers/category-context'
@@ -296,5 +297,20 @@ describe('Trends categories and rules (#28)', () => {
   it('throws when the categories and rules cannot be read', async () => {
     results.category_rules = { data: null, error: { message: 'boom' } }
     await expect(TrendsPage()).rejects.toThrow(/could not read category rules/)
+  })
+})
+
+// One breakpoint (#123): each card's heading sits beside its month from md, where the rest of the
+// app changes layout, and above it below md. They switched at sm, which gave 640-767px the desktop
+// row inside an otherwise phone layout.
+describe('Trends layout', () => {
+  it('puts each card heading beside its month from md up, and above it below md', async () => {
+    const heads = blocks(await TrendsPage())
+      .filter((b) => b.type === Card)
+      .map((card) => ([] as unknown[]).concat(card.props.children)[0] as { props: { className: string } })
+    expect(heads.map((h) => h.props.className)).toEqual([
+      'flex flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-3',
+      'flex flex-col gap-1 md:flex-row md:items-center md:justify-between md:gap-3',
+    ])
   })
 })

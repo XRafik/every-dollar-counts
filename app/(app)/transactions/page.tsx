@@ -159,7 +159,7 @@ export default async function TransactionsPage({
             {category && <input type="hidden" name="category" value={category} />}
             {month && <input type="hidden" name="month" value={month} />}
             {flow && <input type="hidden" name="flow" value={flow} />}
-            <div className="w-full sm:w-64">
+            <div className="w-full md:w-64">
               <input
                 name="q"
                 defaultValue={q ?? ''}

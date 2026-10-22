@@ -107,6 +107,13 @@ describe('GoalsList', () => {
     expect(bars.length).toBeGreaterThan(0)
   })
 
+  // One breakpoint (#123): two goals across from md, where the rest of the app changes layout, and
+  // one below it. At sm, 640-767px got two goals across beside the phone layout around them.
+  it('puts the goals two across from md up and one across below it', () => {
+    const { container } = render(<GoalsList {...props} />)
+    expect(container.querySelector('[data-goal-card]')!.parentElement!.className).toBe('grid gap-4 md:grid-cols-2')
+  })
+
   // Stacking must not cost the form any of its fields, nor the list any of its goals.
   it('still renders both fields and every goal', () => {
     render(<GoalsList {...props} />)

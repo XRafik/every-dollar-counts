@@ -141,11 +141,12 @@ describe('AccountList', () => {
 
   // This string used to live in app/(app)/dashboard/page.tsx and came across untouched. Moving a
   // class string is exactly when it can drift without anything noticing. The grid is the list's
-  // root: with the control inside it (#107) there is nothing else to wrap.
-  it('keeps the grid it was lifted out of the page with', () => {
+  // root: with the control inside it (#107) there is nothing else to wrap. Two across from md, the
+  // one breakpoint (#123): at sm, 640-767px got two cards across under a one-column phone layout.
+  it('keeps the grid it was lifted out of the page with, switching at md', () => {
     const { container } = render(<AccountList accounts={accounts} />)
     expect(container.childElementCount).toBe(1)
-    expect(container.firstElementChild!.className).toBe('grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3')
+    expect(container.firstElementChild!.className).toBe('grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3')
   })
 
   it('renders nothing rather than an empty shell when there are no accounts', () => {
