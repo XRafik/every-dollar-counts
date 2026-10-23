@@ -80,6 +80,7 @@ vi.mock('@/lib/plaid-slots', () => ({ countSlotsUsed: async () => null, LIFETIME
 // For the tests that render the bank list the page hands out, to read the card as the person does.
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: () => {} }) }))
 
+import { Suspense } from 'react'
 import { render, screen, cleanup } from '@testing-library/react'
 import SettingsPage from '@/app/(app)/settings/page'
 import { TimezoneCard } from '@/components/TimezoneCard'
@@ -89,6 +90,8 @@ import { BankList } from '@/components/BankList'
 import { HomeValueCard } from '@/components/HomeValueCard'
 import { LinkButton } from '@/components/LinkButton'
 import { Card } from '@/components/ui/Card'
+import { ScrollToSection } from '@/components/ScrollToSection'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { txnRows } from '../stubs/postgrest-pages'
 import { catalogFingerprint } from '@/lib/category-rules'
 import { controlWithText, expectTapTarget } from './helpers/tap-target'
@@ -533,5 +536,99 @@ describe('Settings categories and rules', () => {
     expect(alertText(tree)).toContain("Couldn't load categories and rules.")
     expect((log.mock.calls[0][1] as Error).message).toBe('could not read budgets: read returned no data and no error')
     log.mockRestore()
+  })
+})
+
+// The first element with this id in the page's own markup, walked as findProps walks.
+function byId(node: unknown, id: string): unknown {
+  if (node == null || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = byId(child, id)
+      if (found) return found
+    }
+    return null
+  }
+  const el = node as { props?: { id?: unknown; children?: unknown } }
+  if (el.props?.id === id) return el
+  return el.props && 'children' in el.props ? byId(el.props.children, id) : null
+}
+
+// Every <Suspense> in the page's own markup before the element with this id, in document order,
+// other than one around it, and whether the walk reached that element at all.
+function suspenseBefore(node: unknown, id: string): { reached: boolean; boundaries: unknown[] } {
+  const boundaries: unknown[] = []
+  let reached = false
+  const walk = (n: unknown): void => {
+    if (reached || n == null || typeof n !== 'object') return
+    if (Array.isArray(n)) {
+      for (const child of n) walk(child)
+      return
+    }
+    const el = n as { type?: unknown; props?: { id?: unknown; children?: unknown } }
+    if (el.props?.id === id) {
+      reached = true
+      return
+    }
+    if (el.type === Suspense && !byId(el.props?.children, id)) boundaries.push(el)
+    if (el.props && 'children' in el.props) walk(el.props.children)
+  }
+  walk(node)
+  return { reached, boundaries }
+}
+
+// TransactionCard's "Manage in Settings" and LearnedMarker link to CATEGORY_RULES_HREF (#156).
+// ScrollToSection brings the card that link's section names into view, so the link, the scroll and
+// the card must agree on it.
+describe('Settings: opened on the Category rules card by a link (#156)', () => {
+  const section = new URL(CATEGORY_RULES_HREF, 'http://localhost').searchParams.get('section')!
+
+  // In the card, so it scrolls there whether the card's read worked or failed: a link opens Settings
+  // on the card either way, and a failed card offers its own Try again.
+  it.each([
+    ['loaded', () => {}],
+    ['failed to load', () => (results.categories = { data: null, error: { message: 'boom' } })],
+  ])('scrolls to the Category rules card when it has %s', async (_state, setUp) => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    setUp()
+    const tree = await SettingsPage()
+    const rulesCard = card(tree, 'Category rules')
+    expect(rulesCard).not.toBeNull()
+    expect(byId(tree, section)).toBe(rulesCard)
+    expect(findProps(rulesCard, ScrollToSection)).toEqual({ id: section })
+  })
+
+  // A failed card's "Try again." loads Settings again. The Category rules card's lands back on that
+  // card; the Categories card's, which says the same, goes to the page's top as before.
+  it("sends the Category rules card's Try again back to the card", async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    results.categories = { data: null, error: { message: 'boom' } }
+    const tree = await SettingsPage()
+    expect(findProps(card(tree, 'Category rules'), 'a')).toMatchObject({ href: CATEGORY_RULES_HREF })
+    expect(findProps(card(tree, 'Categories'), 'a')).toMatchObject({ href: '/settings' })
+  })
+
+  // ScrollToSection moves focus to the card's heading, for a screen reader to read on from there. It
+  // takes focus only by script (tabIndex -1, so the Tab key passes it by) and shows no ring.
+  it("lets the card's heading take focus by script, with no ring", async () => {
+    const heading = findProps(card(await SettingsPage(), 'Category rules'), 'h2') as { tabIndex?: number; className: string }
+    expect(heading.tabIndex).toBe(-1)
+    expect(heading.className.split(/\s+/)).toContain('outline-none')
+  })
+
+  // A phone's sticky top bar is 56px (AppShell's h-14). scroll-mt-20 stops the scroll 80px short, so
+  // the card's heading lands below the bar rather than under it.
+  it("keeps the card's heading clear of the phone's sticky top bar", async () => {
+    const rulesCard = card(await SettingsPage(), 'Category rules') as { props: { className: string } }
+    expect(rulesCard.props.className.split(/\s+/)).toContain('scroll-mt-20')
+  })
+
+  // ScrollToSection scrolls once, as the page mounts. Anything that streamed in above the card after
+  // that, through a <Suspense>, would push the card down and out of place, and iOS Safari, which has
+  // no scroll anchoring, would leave it there.
+  it('has no <Suspense> above the card', async () => {
+    const { reached, boundaries } = suspenseBefore(await SettingsPage(), section)
+    expect(reached).toBe(true)
+    expect(boundaries).toEqual([])
   })
 })

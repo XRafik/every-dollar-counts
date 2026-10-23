@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { CategoryRulesCard, type RuleView, type RuleCategory } from '@/components/CategoryRulesCard'
 import { SAVE_TIMEOUT_MS } from '@/lib/save-response'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { neverSettles, useFakeSaveClock } from './helpers/save-replies'
 import { expectTapTarget } from './helpers/tap-target'
 
@@ -199,7 +200,8 @@ describe('CategoryRulesCard', () => {
     expect((screen.getByRole('button', { name: 'Remove the Safeway rule' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
-  // The FK deletes a rule with its category, so a rule whose category is gone raced a delete.
+  // The FK deletes a rule with its category, so a rule whose category is gone raced a delete. The
+  // reload lands back on this card (#156).
   it('asks for a reload instead of offering Change and Remove when the category was just deleted', () => {
     render(<CategoryRulesCard rules={[safeway({ categoryId: 'c-gone', categoryName: 'a deleted category' })]} categories={CATS} suggestedCount={null} />)
     expect(screen.queryByRole('combobox')).toBeNull()
@@ -207,7 +209,7 @@ describe('CategoryRulesCard', () => {
     const note = screen.getByText(/^This category was just deleted\./)
     expect(note.textContent).toBe('This category was just deleted. Reload the page.')
     expect(note.className).toBe('text-xs text-muted')
-    expect(screen.getByRole('link', { name: 'Reload the page.' }).getAttribute('href')).toBe('/settings')
+    expect(screen.getByRole('link', { name: 'Reload the page.' }).getAttribute('href')).toBe(CATEGORY_RULES_HREF)
   })
 
   // #122's comment: the row's only way on in that state, and a 16px-tall text-xs link on a phone.

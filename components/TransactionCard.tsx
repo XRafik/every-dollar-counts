@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button'
 import { tapTargetClass } from '@/components/ui/styles'
 import { CategoryPicker } from '@/components/CategoryPicker'
 import { learnedText } from '@/components/LearnedMarker'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 import { suggestedText } from '@/components/SuggestedMarker'
 import { LearnedIcon, SuggestedIcon } from '@/components/ui/icons'
 import { ReimbursableCheckbox } from '@/components/ReimbursableCheckbox'
@@ -192,7 +193,8 @@ export function TransactionCard({
                         {!busy && (
                           <>
                             {' '}
-                            <Link href="/settings#category-rules" className={`${tapTargetClass} font-medium text-emerald hover:text-emerald-600`}>
+                            {/* scroll={false}: the router's own scroll would run after ScrollToSection's and take Settings back to its top. */}
+                            <Link href={CATEGORY_RULES_HREF} scroll={false} className={`${tapTargetClass} font-medium text-emerald hover:text-emerald-600`}>
                               Manage in Settings
                             </Link>
                           </>

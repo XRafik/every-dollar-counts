@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { LearnedIcon } from './ui/icons'
+import { CATEGORY_RULES_HREF } from '@/lib/settings-links'
 
 // The words for a row a merchant rule relabelled (#28 spec §8.1). One string, so the desktop link
 // and the phone card cannot describe the same thing differently.
@@ -16,7 +17,9 @@ export function LearnedMarker({ category, merchant }: { category: string; mercha
   const text = learnedText(category, merchant)
   return (
     <Link
-      href="/settings#category-rules"
+      href={CATEGORY_RULES_HREF}
+      // The router's own scroll would run after ScrollToSection's and take Settings back to its top.
+      scroll={false}
       title={text}
       aria-label={text}
       className="flex h-[34px] min-h-[44px] min-w-[44px] shrink-0 items-center rounded text-faint transition-colors hover:text-emerald focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald/40 md:min-h-0 md:min-w-0"
